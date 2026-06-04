@@ -1,8 +1,11 @@
 """Load all sweep + substrate parquets, render the three headline plots,
 and print the per-cell summary + discrimination slope.
 
+Doesn't run any model calls — purely loads parquets that run_sweep.py
+and run_substrate.py wrote. Re-runnable as often as you want; cheap.
+
 Usage:
-    python -m scripts.analyze [--probe verify] [--dataset omni-math]
+    python scripts/analyze.py [--probe verify] [--dataset omni-math]
 """
 from __future__ import annotations
 
@@ -26,10 +29,18 @@ from closure.analysis import (
 
 
 def parse_args():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--probe",       default="verify")
-    ap.add_argument("--dataset",     default="omni-math")
-    ap.add_argument("--results-dir", default="results")
+    ap = argparse.ArgumentParser(
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=__doc__,
+    )
+    ap.add_argument("--probe",       default="verify",
+                    help="filter sweeps to this probe (default: verify). "
+                         "Matches the prefix in 'sweep/<probe>__...'.")
+    ap.add_argument("--dataset",     default="omni-math",
+                    help="filter sweeps + substrates to this dataset "
+                         "(default: omni-math)")
+    ap.add_argument("--results-dir", default="results",
+                    help="where parquets live (default: 'results')")
     return ap.parse_args()
 
 

@@ -43,14 +43,14 @@ def parse_args():
     ap.add_argument("--model",       required=True,
                     help="short model label, e.g. 'haiku-4.5', 'opus-4.7'. "
                          "See closure.models.MODELS for the full list.")
-    ap.add_argument("--n-per-level", type=int, default=7,
+    ap.add_argument("--n-per-level", type=int, default=10,
                     help="number of UNIQUE problems sampled from each "
                          "difficulty bucket (Levels 1-5). Higher = broader "
-                         "coverage of distinct problems. Default: 7.")
-    ap.add_argument("--n-trials",    type=int, default=3,
+                         "coverage of distinct problems. Default: 10.")
+    ap.add_argument("--n-trials",    type=int, default=1,
                     help="number of REPEATED runs per (problem, condition). "
                          "Higher = lower variance for fixed problem coverage. "
-                         "Default: 3.")
+                         "Default: 1.")
     ap.add_argument("--seed",        type=int, default=0,
                     help="random seed for problem sampling (default: 0)")
     ap.add_argument("--concurrency", type=int, default=32,
