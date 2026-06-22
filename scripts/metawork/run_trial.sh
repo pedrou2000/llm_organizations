@@ -36,6 +36,6 @@ harbor run \
   --agent "$AGENT" \
   "${MODEL_ARGS[@]}" \
   --ae 'AWS_BEARER_TOKEN_BEDROCK=${AWS_BEARER_TOKEN_BEDROCK}' \
-  --jobs-dir results/harbor_jobs \
+  --jobs-dir results/metawork/harbor_jobs \
   --job-name "$JOB_NAME" \
   -y "$@"

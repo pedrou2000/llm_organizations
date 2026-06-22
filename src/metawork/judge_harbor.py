@@ -33,7 +33,7 @@ async def judge_harbor_job(
     task: str | None = None,
     concurrency: int = 8,
     results_dir: Path | str = "results",
-    jobs_dir: Path | str = "results/harbor_jobs",
+    jobs_dir: Path | str = "results/metawork/harbor_jobs",
     limit: int | None = None,
     keep_prose: bool = True,
 ) -> pd.DataFrame:

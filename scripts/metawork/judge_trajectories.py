@@ -1,6 +1,6 @@
 """Run the meta-work judge over OUR Harbor trajectories (Source B).
 
-Reads a Harbor job under results/harbor_jobs/<job>/, flattens each trial's
+Reads a Harbor job under results/metawork/harbor_jobs/<job>/, flattens each trial's
 ATIF trajectory to blind text, judges it with the pinned judge model, and joins
 the outcome metadata back for analysis. Independent of the published-corpus
 harvest path (harvest.py / run.py).
@@ -25,7 +25,7 @@ def parse_args():
         description=__doc__,
     )
     ap.add_argument("--job", required=True,
-                    help="Harbor job dir name under results/harbor_jobs/ "
+                    help="Harbor job dir name under results/metawork/harbor_jobs/ "
                          "(e.g. m1_gpt55_final16)")
     ap.add_argument("--task", default=None,
                     help="optional task prefix filter (e.g. excel-clone)")
@@ -41,7 +41,7 @@ def parse_args():
     ap.add_argument("--limit", type=int, default=None,
                     help="judge only the first N trajectories (cheap probe)")
     ap.add_argument("--results-dir", default="results")
-    ap.add_argument("--jobs-dir", default="results/harbor_jobs")
+    ap.add_argument("--jobs-dir", default="results/metawork/harbor_jobs")
     ap.add_argument("--force", action="store_true",
                     help="re-judge even if the output parquet exists")
     return ap.parse_args()

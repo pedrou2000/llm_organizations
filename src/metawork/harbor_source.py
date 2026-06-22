@@ -2,7 +2,7 @@
 
 This is the Source-B sibling of `harvest.py`. Where `harvest.py` pulls the
 PUBLISHED SWE-Marathon trajectories off the website, this module reads the
-trajectories WE generate locally with Harbor (`results/harbor_jobs/...`) and
+trajectories WE generate locally with Harbor (`results/metawork/harbor_jobs/...`) and
 renders each into the same blind `flat_text` + metadata row the judge consumes.
 
 It deliberately shares nothing with `harvest.py` (no web download, no JS-bundle
@@ -30,7 +30,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-DEFAULT_JOBS_DIR = Path("results/harbor_jobs")
+DEFAULT_JOBS_DIR = Path("results/metawork/harbor_jobs")
 
 # Map ATIF tool function names to the coarse "kind" vocabulary the published
 # trajectories use (so trajectory_stats / the judge see familiar action types).
