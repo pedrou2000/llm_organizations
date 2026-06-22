@@ -17,7 +17,7 @@ for the reliability panel) and produces the figures that tell the story:
   6. range_restriction      — within-cell corr vs how much the model varied its
                               meta-work; flat => not range-restriction.
 
-Output: results/metawork/plots/*.png (+ .pdf)
+Output: results/metawork/plots/*.png
 
 Usage:
     python scripts/metawork/plot.py
@@ -46,10 +46,9 @@ def _load(results_dir: Path) -> pd.DataFrame:
 
 def _save(fig, plots_dir: Path, name: str):
     plots_dir.mkdir(parents=True, exist_ok=True)
-    for ext in ("png", "pdf"):
-        fig.savefig(plots_dir / f"{name}.{ext}", dpi=150, bbox_inches="tight")
+    fig.savefig(plots_dir / f"{name}.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"  saved {name}.{{png,pdf}}")
+    print(f"  saved {name}.png")
 
 
 def _within(df, groupcols):

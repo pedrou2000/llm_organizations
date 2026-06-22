@@ -14,10 +14,8 @@ DEFAULT_LEVELS = [f"Level {i}" for i in range(1, 6)]
 
 def _save(fig, plots_dir: Path, name: str) -> None:
     plots_dir.mkdir(parents=True, exist_ok=True)
-    for ext in ("png", "pdf"):
-        path = plots_dir / f"{name}.{ext}"
-        fig.savefig(path, dpi=150, bbox_inches="tight")
-    print(f"  saved {plots_dir}/{name}.{{png,pdf}}")
+    fig.savefig(plots_dir / f"{name}.png", dpi=150, bbox_inches="tight")
+    print(f"  saved {plots_dir}/{name}.png")
 
 
 def plot_verify_by_level(
