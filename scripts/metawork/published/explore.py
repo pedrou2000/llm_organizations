@@ -6,7 +6,7 @@ Structural / metadata exploration only — no LLM judging yet. Answers:
   - Does the 'thrash' signature (high effort, zero score) show up, in whom?
 
 Usage:
-    python scripts/explore_metawork_harvest.py [--size l]
+    python scripts/metawork/published/explore.py [--size l]
 """
 from __future__ import annotations
 

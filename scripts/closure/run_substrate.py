@@ -8,7 +8,7 @@ Total problems run = 5 levels x n_per_level. With the default 7,
 that's 35 problems.
 
 Usage:
-    python scripts/run_substrate.py --model haiku-4.5 [--n-per-level 7] [--no-traces]
+    python scripts/closure/run_substrate.py --model haiku-4.5 [--n-per-level 7] [--no-traces]
 """
 from __future__ import annotations
 

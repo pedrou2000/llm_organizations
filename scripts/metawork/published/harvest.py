@@ -16,8 +16,8 @@ Output: results/metawork/harvest_<size>.parquet
            n_submit, first_write_frac, kinds(json), flat_text, flat_chars
 
 Usage:
-    python scripts/harvest_metawork.py --size s
-    python scripts/harvest_metawork.py --size m --tasks excel-clone slack-clone
+    python scripts/metawork/published/harvest.py --size s
+    python scripts/metawork/published/harvest.py --size m --tasks excel-clone slack-clone
 """
 from __future__ import annotations
 

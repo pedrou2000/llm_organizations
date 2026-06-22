@@ -5,7 +5,7 @@ Doesn't run any model calls — purely loads parquets that run_sweep.py
 and run_substrate.py wrote. Re-runnable as often as you want; cheap.
 
 Usage:
-    python scripts/analyze.py [--probe verify] [--dataset omni-math]
+    python scripts/closure/analyze.py [--probe verify] [--dataset omni-math]
 """
 from __future__ import annotations
 

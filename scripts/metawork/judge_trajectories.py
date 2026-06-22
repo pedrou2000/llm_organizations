@@ -6,8 +6,8 @@ the outcome metadata back for analysis. Independent of the published-corpus
 harvest path (harvest.py / run.py).
 
 Usage:
-    python scripts/judge_harbor_trajectories.py --job m1_gpt55_final16 --judge-model opus-4.8
-    python scripts/judge_harbor_trajectories.py --job m1_gpt55_final16 --task excel-clone --limit 2
+    python scripts/metawork/judge_trajectories.py --job m1_gpt55_final16 --judge-model opus-4.8
+    python scripts/metawork/judge_trajectories.py --job m1_gpt55_final16 --task excel-clone --limit 2
 """
 from __future__ import annotations
 

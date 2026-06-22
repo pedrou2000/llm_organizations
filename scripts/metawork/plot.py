@@ -20,7 +20,7 @@ for the reliability panel) and produces the figures that tell the story:
 Output: results/metawork/plots/*.png (+ .pdf)
 
 Usage:
-    python scripts/plot_metawork.py
+    python scripts/metawork/plot.py
 """
 from __future__ import annotations
 

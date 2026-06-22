@@ -18,7 +18,7 @@ Example sizings (defaults skip Levels 1-2 for opus tier):
     --n-per-level 14  --n-trials 10   ->  N=140, 1260 trials/sweep
 
 Usage:
-    python scripts/run_sweep.py --model opus-4.7 [--n-trials 3] [--n-per-level 7]
+    python scripts/closure/run_sweep.py --model opus-4.7 [--n-trials 3] [--n-per-level 7]
 """
 from __future__ import annotations
 

@@ -8,9 +8,9 @@ Sizes mirror the harvest:  s=20, m=100, l=full(~1300).
 Cost ladder: start with --size s (cheap), read the result, then scale.
 
 Usage:
-    python scripts/run_metawork_judge.py --size s
-    python scripts/run_metawork_judge.py --size m --concurrency 16
-    python scripts/run_metawork_judge.py --size l   # full corpus
+    python scripts/metawork/published/judge.py --size s
+    python scripts/metawork/published/judge.py --size m --concurrency 16
+    python scripts/metawork/published/judge.py --size l   # full corpus
 """
 from __future__ import annotations
 
