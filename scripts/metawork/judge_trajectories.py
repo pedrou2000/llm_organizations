@@ -15,8 +15,8 @@ import argparse
 import asyncio
 from pathlib import Path
 
+from metawork.harbor import judge_harbor_job
 from metawork.judge import DEFAULT_JUDGE_MODEL_LABEL
-from metawork.judge_harbor import judge_harbor_job
 
 
 def parse_args():

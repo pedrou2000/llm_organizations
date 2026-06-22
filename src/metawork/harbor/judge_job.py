@@ -1,9 +1,9 @@
 """Batch meta-work judging over OUR Harbor trajectories (Source B).
 
-The job-keyed counterpart of `run.py` (which judges the published Source-A
-corpus by "size"). Loads a Harbor job via `harbor_source.load_job`, judges each
-trajectory BLIND with the same durable judge (`judge.py`), then joins the
-outcome metadata back for analysis.
+The job-keyed counterpart of `metawork.published.judge_corpus` (which judges the
+published Source-A corpus by "size"). Loads a Harbor job via `source.load_job`,
+judges each trajectory BLIND with the same durable judge (`metawork.judge`), then
+joins the outcome metadata back for analysis.
 
 Output: results/metawork/judged/judged_harbor_<job>__<judge_model>.parquet
 """
@@ -15,8 +15,8 @@ import pandas as pd
 
 from common.concurrency import gather_with_progress
 
-from .harbor_source import load_job
-from .judge import DEFAULT_JUDGE_MODEL_LABEL, judge_trajectory
+from ..judge import DEFAULT_JUDGE_MODEL_LABEL, judge_trajectory
+from .source import load_job
 
 # Metadata columns carried alongside the judge's rubric scores.
 _META_COLS = [

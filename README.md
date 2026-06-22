@@ -17,8 +17,10 @@ Both share generic infrastructure in **`common/`**.
 src/
 ├── common/      shared infra: models (Bedrock IDs), trace logging, concurrency runner
 ├── closure/     math probe: math_judge, sweep, data/, probes/, analysis/
-└── metawork/    SWE-Marathon: judge (+ prompt), harbor_source, judge_harbor,
-                 harvest + run (published-corpus path)
+└── metawork/    SWE-Marathon experiment, split by trajectory source:
+    ├── judge/       the durable blind judge (+ prompt.md) — both sources feed it
+    ├── harbor/      Source B: our own Harbor runs (source.py, judge_job.py) — M4+
+    └── published/   Source A: published-website corpus (harvest.py, judge_corpus.py)
 
 scripts/
 ├── closure/     run_substrate.py, run_sweep.py, analyze.py

@@ -15,7 +15,7 @@ import pandas as pd
 
 from common.concurrency import gather_with_progress
 
-from .judge import DEFAULT_JUDGE_MODEL_LABEL, judge_trajectory
+from ..judge import DEFAULT_JUDGE_MODEL_LABEL, judge_trajectory
 
 # Columns from the harvest table we keep alongside the judge's scores.
 _META_COLS = [

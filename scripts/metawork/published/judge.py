@@ -19,7 +19,7 @@ import asyncio
 from pathlib import Path
 
 from metawork.judge import DEFAULT_JUDGE_MODEL_LABEL
-from metawork.run import judge_corpus
+from metawork.published import judge_corpus
 
 
 def parse_args():

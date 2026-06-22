@@ -1,7 +1,7 @@
 """LLM-as-a-judge for meta-work quality of an agent trajectory.
 
 Mirrors the math `closure.math_judge` pattern: pinned judge model, single-shot
-(`max_turns=1`), no tools, prompt loaded from `judge_prompt.md`, structured
+(`max_turns=1`), no tools, prompt loaded from `prompt.md`, structured
 output parsed defensively. The judge is BLIND — it receives only the
 flattened trajectory text (no model identity, no score).
 
@@ -27,7 +27,7 @@ from common.models import MODELS
 
 DEFAULT_JUDGE_MODEL_LABEL = "haiku-4.5"
 
-_PROMPT_PATH = Path(__file__).with_name("judge_prompt.md")
+_PROMPT_PATH = Path(__file__).with_name("prompt.md")
 JUDGE_SYSTEM_PROMPT = _PROMPT_PATH.read_text()
 
 # Giant trajectories (the corpus tail reaches ~770K chars ≈ 190K tokens).

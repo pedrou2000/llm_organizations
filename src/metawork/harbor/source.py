@@ -1,15 +1,15 @@
 """Adapt our own Harbor trajectories into the meta-work judge's input format.
 
-This is the Source-B sibling of `harvest.py`. Where `harvest.py` pulls the
-PUBLISHED SWE-Marathon trajectories off the website, this module reads the
+This is the Source-B sibling of `metawork.published.harvest`. Where that module
+pulls the PUBLISHED SWE-Marathon trajectories off the website, this one reads the
 trajectories WE generate locally with Harbor (`results/metawork/harbor_jobs/...`) and
 renders each into the same blind `flat_text` + metadata row the judge consumes.
 
-It deliberately shares nothing with `harvest.py` (no web download, no JS-bundle
-parsing, no `harvest_<size>.parquet` schema): when the published-corpus
-reproduction phase is retired, `harvest.py` can be deleted and this keeps working.
-The only durable dependency is the judge itself (`judge.py` / `judge_prompt.md`),
-fed downstream by `judge_harbor.py`.
+It deliberately shares nothing with the published path (no web download, no
+JS-bundle parsing, no `harvest_<size>.parquet` schema): the published corpus is
+kept only for the observational study, and this path stands alone. The only
+durable dependency is the judge itself (`metawork.judge`), fed downstream by
+`judge_job.py`.
 
 Harbor trajectories are ATIF-v1.7:
     {schema_version, session_id, agent, steps:[...], final_metrics}
@@ -129,7 +129,7 @@ def flatten_rows(rows: list[dict], *, max_detail: int = 500,
     """Render rows to blind, readable text — same shape as the published
     flattener: `[step N] Kind: title` plus the agent prose beneath it.
 
-    Re-implemented here (rather than imported from harvest.py) so this module
+    Re-implemented here (rather than imported from the published path) so this module
     has no dependency on the throwaway published-corpus path.
 
     `keep_prose` (default True) is the honest, full-fidelity view: it includes
