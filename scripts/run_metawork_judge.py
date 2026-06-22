@@ -18,8 +18,8 @@ import argparse
 import asyncio
 from pathlib import Path
 
-from closure.metawork.judge import DEFAULT_JUDGE_MODEL_LABEL
-from closure.metawork.run import judge_corpus
+from metawork.judge import DEFAULT_JUDGE_MODEL_LABEL
+from metawork.run import judge_corpus
 
 
 def parse_args():

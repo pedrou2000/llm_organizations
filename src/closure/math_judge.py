@@ -14,7 +14,7 @@ from claude_agent_sdk import (
     query,
 )
 
-from .models import MODELS
+from common.models import MODELS
 
 JUDGE_MODEL_LABEL = "haiku-4.5"
 

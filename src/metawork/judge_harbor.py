@@ -13,7 +13,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from ..sweep import gather_with_progress
+from common.concurrency import gather_with_progress
+
 from .harbor_source import load_job
 from .judge import DEFAULT_JUDGE_MODEL_LABEL, judge_trajectory
 

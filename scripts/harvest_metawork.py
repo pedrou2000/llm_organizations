@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from closure.metawork.harvest import SIZES, harvest
+from metawork.harvest import SIZES, harvest
 
 
 def parse_args():

@@ -6,16 +6,16 @@ of problems. Calls `probe.run_trial(ex, condition, model_id)` for every
 """
 from __future__ import annotations
 
-import asyncio
-import time
 from pathlib import Path
 
 import pandas as pd
 
+from common.concurrency import gather_with_progress
+from common.models import MODELS
+from common.trace import fmt_duration
+
 from .data import omni_math as _omni_math   # default dataset
-from .models import MODELS
 from .probes.base import Condition
-from .trace import fmt_duration
 
 
 # Per-model floor on which level-tier to bother sweeping. Models that
@@ -32,61 +32,6 @@ MIN_LEVEL_FOR_MODEL: dict[str, int] = {
     "sonnet-4.6": 3,
     # Sonnet 4 / haiku tiers: keep all 5 levels (gradient is interesting).
 }
-
-
-async def gather_with_progress(
-    coros: list,
-    *,
-    limit: int = 32,
-    label: str = "run",
-    log_each: bool = False,
-    log_fields: tuple[str, ...] = (),
-) -> list:
-    """Bounded concurrency. Reports progress, ETA, running cost, errors."""
-    sem = asyncio.Semaphore(limit)
-    total = len(coros)
-    done = 0
-    cost_sum = 0.0
-    err_count = 0
-    t0 = time.monotonic()
-    results: list = [None] * total
-
-    async def _wrapped(idx, c):
-        nonlocal done, cost_sum, err_count
-        async with sem:
-            err_text = None
-            try:
-                r = await c
-            except Exception as e:
-                err_text = f"{type(e).__name__}: {e}"
-                r = {"error": err_text, "cost_usd": 0.0}
-                err_count += 1
-            results[idx] = r
-            done += 1
-            cost_sum += float(r.get("cost_usd") or 0.0)
-            elapsed = time.monotonic() - t0
-            rate = done / elapsed if elapsed > 0 else 0.0
-            eta = (total - done) / rate if rate > 0 else float("inf")
-            line = (
-                f"  [{label}] {done:>4}/{total}  "
-                f"elapsed {fmt_duration(elapsed):>10s}  "
-                f"eta {fmt_duration(eta):>10s}  "
-                f"${cost_sum:>5.2f}  "
-                f"err={err_count}"
-            )
-            if err_text:
-                line += f"   ERR: {err_text[:160]}"
-            elif log_each and log_fields:
-                extras = "  ".join(
-                    f"{f}={r.get(f)!r}" if not isinstance(r.get(f), float)
-                    else f"{f}={r.get(f):.3f}"
-                    for f in log_fields if f in r
-                )
-                line += "   " + extras
-            print(line, flush=True)
-
-    await asyncio.gather(*[_wrapped(i, c) for i, c in enumerate(coros)])
-    return results
 
 
 def levels_for_model(model_label: str, levels: list[str]) -> list[str]:

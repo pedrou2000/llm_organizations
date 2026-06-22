@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 
 from claude_agent_sdk import create_sdk_mcp_server, tool
 
-from ...judge import judge_correct
+from ...math_judge import judge_correct
 
 
 @dataclass

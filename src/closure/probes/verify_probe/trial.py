@@ -18,9 +18,10 @@ from claude_agent_sdk import (
     query,
 )
 
-from ...judge import JUDGE_MODEL_LABEL, judge_correct
-from ...models import MODELS, label_for_id
-from ...trace import next_trace_idx, slug, write_trace
+from common.models import MODELS, label_for_id
+from common.trace import next_trace_idx, slug, write_trace
+
+from ...math_judge import JUDGE_MODEL_LABEL, judge_correct
 from ..base import Condition
 from .conditions import (
     CONDITIONS,

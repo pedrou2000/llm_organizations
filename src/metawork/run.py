@@ -1,6 +1,6 @@
 """Batch meta-work judging over a harvested trajectory corpus.
 
-Reuses the generic `closure.sweep.gather_with_progress` harness (bounded
+Reuses the generic `common.concurrency.gather_with_progress` harness (bounded
 concurrency + progress/ETA/cost). Judges each trajectory BLIND, then joins
 the metadata (model / partial / correctness / gates) back AFTER judging so
 the meta-work score can never be contaminated by the outcome.
@@ -13,7 +13,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from ..sweep import gather_with_progress
+from common.concurrency import gather_with_progress
+
 from .judge import DEFAULT_JUDGE_MODEL_LABEL, judge_trajectory
 
 # Columns from the harvest table we keep alongside the judge's scores.

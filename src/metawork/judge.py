@@ -1,6 +1,6 @@
 """LLM-as-a-judge for meta-work quality of an agent trajectory.
 
-Mirrors the math `closure.judge` pattern: pinned judge model, single-shot
+Mirrors the math `closure.math_judge` pattern: pinned judge model, single-shot
 (`max_turns=1`), no tools, prompt loaded from `judge_prompt.md`, structured
 output parsed defensively. The judge is BLIND — it receives only the
 flattened trajectory text (no model identity, no score).
@@ -23,7 +23,7 @@ from claude_agent_sdk import (
     query,
 )
 
-from ..models import MODELS
+from common.models import MODELS
 
 DEFAULT_JUDGE_MODEL_LABEL = "haiku-4.5"
 
