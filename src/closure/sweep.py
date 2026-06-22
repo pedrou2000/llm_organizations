@@ -66,8 +66,8 @@ async def run_substrate(
     all_problems = [ex for lvl in levels for ex in pool[lvl]]
 
     results_dir = Path(results_dir)
-    out_path = results_dir / "substrate" / f"{dataset}__{model_label}.parquet"
-    trace_root = results_dir / "traces" / probe.name / dataset if save_traces else None
+    out_path = results_dir / "closure" / "substrate" / f"{dataset}__{model_label}.parquet"
+    trace_root = results_dir / "closure" / "traces" / probe.name / dataset if save_traces else None
     if trace_root is not None:
         trace_root.mkdir(parents=True, exist_ok=True)
 
@@ -126,8 +126,8 @@ async def run_sweep(
     skipped = [l for l in levels if l not in active_levels]
 
     results_dir = Path(results_dir)
-    out_path = results_dir / "sweep" / f"{probe.name}__{dataset}__{model_label}.parquet"
-    trace_root = results_dir / "traces" / probe.name / dataset if save_traces else None
+    out_path = results_dir / "closure" / "sweep" / f"{probe.name}__{dataset}__{model_label}.parquet"
+    trace_root = results_dir / "closure" / "traces" / probe.name / dataset if save_traces else None
     if trace_root is not None:
         trace_root.mkdir(parents=True, exist_ok=True)
 

@@ -45,7 +45,7 @@ def parse_args():
 
 async def main():
     args = parse_args()
-    out_path = (Path(args.results_dir) / "metawork"
+    out_path = (Path(args.results_dir) / "metawork" / "judged"
                 / f"judged_{args.size}__{args.judge_model}.parquet")
     if out_path.exists() and not args.force and args.limit is None:
         print(f"skipping: {out_path} already exists (use --force to re-judge)")

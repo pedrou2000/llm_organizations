@@ -59,7 +59,7 @@ def main():
     print("--- discrimination slope ---")
     print(slopes.to_string(index=False))
 
-    plots_dir = Path(args.results_dir) / "plots" / args.probe / args.dataset
+    plots_dir = Path(args.results_dir) / "closure" / "plots" / args.probe / args.dataset
     print(f"\n--- saving plots to {plots_dir}/ ---")
     plot_verify_by_level(summary, plots_dir=plots_dir)
     plot_verify_vs_passrate(summary, sub, plots_dir=plots_dir)

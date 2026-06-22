@@ -75,7 +75,7 @@ async def main():
     pool, _ = build_pool(seed=args.seed, n_per_level=args.n_per_level)
 
     out_path = (
-        Path(args.results_dir) / "sweep"
+        Path(args.results_dir) / "closure" / "sweep"
         / f"{args.probe}__{args.dataset}__{args.model}.parquet"
     )
     if out_path.exists() and not args.force:

@@ -5,7 +5,7 @@ corpus by "size"). Loads a Harbor job via `harbor_source.load_job`, judges each
 trajectory BLIND with the same durable judge (`judge.py`), then joins the
 outcome metadata back for analysis.
 
-Output: results/metawork/judged_harbor_<job>__<judge_model>.parquet
+Output: results/metawork/judged/judged_harbor_<job>__<judge_model>.parquet
 """
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ async def judge_harbor_job(
     out["flatten_mode"] = "full" if keep_prose else "parity"
 
     suffix = "" if keep_prose else "_parity"
-    out_path = (results_dir / "metawork"
+    out_path = (results_dir / "metawork" / "judged"
                 / f"judged_harbor_{job}__{judge_model_label}{suffix}.parquet")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out.to_parquet(out_path)

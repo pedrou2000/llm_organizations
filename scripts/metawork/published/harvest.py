@@ -10,7 +10,7 @@ Sizes (stratified across task x model):
     m  -> 100 trajectories  (first real distribution)
     l  -> full corpus (~1300)
 
-Output: results/metawork/harvest_<size>.parquet
+Output: results/metawork/harvest/harvest_<size>.parquet
   columns: id, task, model, reward, partial, correctness, ux, gates,
            tokens, cost, steps, n_rows, n_plan_tool, n_write, n_bash,
            n_submit, first_write_frac, kinds(json), flat_text, flat_chars
@@ -50,7 +50,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    out_path = Path(args.results_dir) / "metawork" / f"harvest_{args.size}.parquet"
+    out_path = Path(args.results_dir) / "metawork" / "harvest" / f"harvest_{args.size}.parquet"
     if out_path.exists() and not args.force:
         print(f"skipping: {out_path} already exists (use --force to re-harvest)")
         return

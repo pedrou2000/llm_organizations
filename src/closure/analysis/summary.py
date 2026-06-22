@@ -17,12 +17,8 @@ def load_all_sweeps(
 ) -> pd.DataFrame:
     """Load all sweep parquets matching the optional probe/dataset filters."""
     results_dir = Path(results_dir)
-    sweep_dir = results_dir / "sweep"
+    sweep_dir = results_dir / "closure" / "sweep"
     if not sweep_dir.exists():
-        # Backwards-compat: also look for old top-level sweep_omni_*.parquet
-        legacy = sorted(results_dir.glob("sweep_omni_*.parquet"))
-        if legacy:
-            return pd.concat([pd.read_parquet(p) for p in legacy], ignore_index=True)
         raise FileNotFoundError(f"no sweep dir at {sweep_dir}")
 
     paths = sorted(sweep_dir.glob("*.parquet"))
@@ -45,17 +41,9 @@ def load_all_substrates(
 ) -> pd.DataFrame:
     """Load all substrate parquets, optionally filtered by dataset."""
     results_dir = Path(results_dir)
-    sub_dir = results_dir / "substrate"
+    sub_dir = results_dir / "closure" / "substrate"
     if not sub_dir.exists():
-        # Legacy: top-level substrate_omni_*.parquet
-        legacy = sorted(results_dir.glob("substrate_omni_*.parquet"))
-        frames = []
-        for p in legacy:
-            label = p.stem.replace("substrate_omni_", "")
-            df = pd.read_parquet(p)
-            df["model_label"] = label
-            frames.append(df)
-        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        return pd.DataFrame()
 
     paths = sorted(sub_dir.glob("*.parquet"))
     if dataset:

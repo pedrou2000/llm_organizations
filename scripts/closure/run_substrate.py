@@ -62,7 +62,7 @@ async def main():
     probe = _PROBES[args.probe]()
     pool, _ = build_pool(seed=args.seed, n_per_level=args.n_per_level)
 
-    out_path = Path(args.results_dir) / "substrate" / f"{args.dataset}__{args.model}.parquet"
+    out_path = Path(args.results_dir) / "closure" / "substrate" / f"{args.dataset}__{args.model}.parquet"
     if out_path.exists():
         print(f"skipping: {out_path} already exists "
               f"(delete to force re-run)")

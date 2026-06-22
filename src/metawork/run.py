@@ -5,7 +5,7 @@ concurrency + progress/ETA/cost). Judges each trajectory BLIND, then joins
 the metadata (model / partial / correctness / gates) back AFTER judging so
 the meta-work score can never be contaminated by the outcome.
 
-Output: results/metawork/judged_<size>__<judge_model>.parquet
+Output: results/metawork/judged/judged_<size>__<judge_model>.parquet
 """
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ async def judge_corpus(
     pass). Persists to judged_<size>__<judge_model>.parquet.
     """
     results_dir = Path(results_dir)
-    harvest_path = results_dir / "metawork" / f"harvest_{size}.parquet"
+    harvest_path = results_dir / "metawork" / "harvest" / f"harvest_{size}.parquet"
     harvest = pd.read_parquet(harvest_path)
     if limit is not None:
         harvest = harvest.head(limit).copy()
@@ -62,7 +62,7 @@ async def judge_corpus(
     out = pd.concat([meta, vdf], axis=1)
     out["judge_model"] = judge_model_label
 
-    out_path = results_dir / "metawork" / f"judged_{size}__{judge_model_label}.parquet"
+    out_path = results_dir / "metawork" / "judged" / f"judged_{size}__{judge_model_label}.parquet"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out.to_parquet(out_path)
 
