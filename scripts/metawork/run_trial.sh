@@ -11,7 +11,7 @@ set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 cd /home/ubuntu/workplace/llm_organizations
 
-JOB_NAME="${1:?usage: harbor_run_trial.sh JOB_NAME [extra flags...]}"
+JOB_NAME="${1:?usage: run_trial.sh JOB_NAME [extra flags...]}"
 shift || true
 
 # Agent is overridable so we can run the `oracle` agent (reference solution,

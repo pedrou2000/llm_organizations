@@ -74,6 +74,10 @@ async def judge_harbor_job(
     out["flatten_mode"] = "full" if keep_prose else "parity"
 
     suffix = "" if keep_prose else "_parity"
+    # A limited run is a cheap probe over the first N trajectories, not the full
+    # job — give it a distinct name so it never clobbers the full parquet.
+    if limit is not None:
+        suffix += f"_limit{limit}"
     out_path = (results_dir / "metawork" / "judged"
                 / f"judged_harbor_{job}__{judge_model_label}{suffix}.parquet")
     out_path.parent.mkdir(parents=True, exist_ok=True)

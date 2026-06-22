@@ -50,9 +50,11 @@ def parse_args():
 async def main():
     args = parse_args()
     suffix = "" if not args.parity else "_parity"
+    if args.limit is not None:
+        suffix += f"_limit{args.limit}"
     out_path = (Path(args.results_dir) / "metawork" / "judged"
                 / f"judged_harbor_{args.job}__{args.judge_model}{suffix}.parquet")
-    if out_path.exists() and not args.force and args.limit is None:
+    if out_path.exists() and not args.force:
         print(f"skipping: {out_path} already exists (use --force to re-judge)")
         return
     await judge_harbor_job(

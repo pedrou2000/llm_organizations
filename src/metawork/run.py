@@ -62,7 +62,10 @@ async def judge_corpus(
     out = pd.concat([meta, vdf], axis=1)
     out["judge_model"] = judge_model_label
 
-    out_path = results_dir / "metawork" / "judged" / f"judged_{size}__{judge_model_label}.parquet"
+    # A limited run is a cheap probe, not the full corpus — distinct name so it
+    # never clobbers the full parquet.
+    lim = f"_limit{limit}" if limit is not None else ""
+    out_path = results_dir / "metawork" / "judged" / f"judged_{size}__{judge_model_label}{lim}.parquet"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out.to_parquet(out_path)
 
