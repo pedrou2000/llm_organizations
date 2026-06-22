@@ -32,7 +32,7 @@ fi
 # runtime — config.json then stores '${AWS_BEARER_TOKEN_BEDROCK}', never the key.
 # (The ux/CUA Bedrock judge reads this token; codex also uses it to build.)
 harbor run \
-  -p external/swe-marathon/tasks/excel-clone \
+  -p vendor/swe-marathon/tasks/excel-clone \
   --agent "$AGENT" \
   "${MODEL_ARGS[@]}" \
   --ae 'AWS_BEARER_TOKEN_BEDROCK=${AWS_BEARER_TOKEN_BEDROCK}' \

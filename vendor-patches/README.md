@@ -1,6 +1,6 @@
 # Patches to vendored repos
 
-`external/harbor/` and `external/swe-marathon/` are upstream clones (their own
+`vendor/harbor/` and `vendor/swe-marathon/` are upstream clones (their own
 git, gitignored from this repo). We made small local edits to stand up the
 GPT-5.5 × excel-clone meta-work experiment. Those edits are captured here as
 `git apply`-able diffs so a fresh checkout can reconstruct the working setup
@@ -9,11 +9,11 @@ without vendoring 287 MB of upstream code.
 ## How to apply
 
 ```bash
-# from repo root, after cloning the two upstream repos into external/
-cd external/swe-marathon && git checkout 41f118a && git apply ../../patches/swe-marathon__cua-bedrock-route.patch && cd ../..
-cd external/harbor       && git checkout 578713b && git apply ../../patches/harbor__codex-bedrock-provider.patch && git apply ../../patches/harbor__cua-stage-app-boot.patch && cd ../..
+# from repo root, after cloning the two upstream repos into vendor/
+cd vendor/swe-marathon && git checkout 41f118a && git apply ../../vendor-patches/swe-marathon__cua-bedrock-route.patch && cd ../..
+cd vendor/harbor       && git checkout 578713b && git apply ../../vendor-patches/harbor__codex-bedrock-provider.patch && git apply ../../vendor-patches/harbor__cua-stage-app-boot.patch && cd ../..
 # then reinstall harbor editable WITH the CUA-stage judge deps:
-uv tool install --editable ./external/harbor --force --with anthropic --with boto3
+uv tool install --editable ./vendor/harbor --force --with anthropic --with boto3
 ```
 
 ### Why `--with anthropic --with boto3`
