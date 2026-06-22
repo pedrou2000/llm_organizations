@@ -1,0 +1,69 @@
+diff --git a/src/harbor/verifier/multi_stage.py b/src/harbor/verifier/multi_stage.py
+index 53a09f1..9fda8aa 100644
+--- a/src/harbor/verifier/multi_stage.py
++++ b/src/harbor/verifier/multi_stage.py
+@@ -111,12 +111,64 @@ class MultiStageVerifier:
+         original_verifier = self._task.config.verifier
+         self._task.config.verifier = stage
+         try:
++            if stage.type is VerifierType.CUA:
++                await self._ensure_app_booted_for_cua(stage, logger)
+             verifier = self._build_underlying_verifier(stage)
+             timeout = stage.timeout_sec
+             return await asyncio.wait_for(verifier.verify(), timeout=timeout)
+         finally:
+             self._task.config.verifier = original_verifier
+ 
++    async def _ensure_app_booted_for_cua(
++        self, stage: VerifierConfig, logger: logging.Logger
++    ) -> None:
++        """Re-boot the agent's app (detached) before a shared-env CUA stage.
++
++        Parity fix for local harbor: in SHARED verifier mode the prior
++        shell stage's ``tests/test.sh`` boots ``/app/start.sh`` under its
++        own PID and ``kill``s it on its EXIT trap, so a foreground
++        ``exec uvicorn`` start.sh is dead by the time the CUA navigates to
++        ``start_url`` (→ ERR_CONNECTION_REFUSED → ux=0). harbor's CUA path
++        never boots the app; oddish (the published runner) evidently does.
++        We mirror that here: if the app isn't already serving, launch
++        ``/app/start.sh`` in its OWN session (``setsid`` — survives this
++        verifier's process group) and poll the SPA root until it answers.
++
++        Idempotent and best-effort: a ``setsid``-detached start.sh whose
++        server is still up makes the boot a no-op (we skip on the first
++        successful poll), and any failure here is logged but never blocks
++        the stage — the CUA still runs and grades a dead app as it would
++        have anyway.
++        """
++        # Poll the SPA root (always served by the app server) rather than a
++        # task-specific health path, so this stays task-agnostic across the
++        # CUA-task family (excel-clone /api/health, s3-clone /_health, ...).
++        cfg = self._task.config.verifier.cua
++        url = cfg.start_url or self._task.config.agent.start_url
++        if not url:
++            return
++        quoted = shlex.quote(url)
++        boot = (
++            f"if curl -fsS --max-time 2 -o /dev/null {quoted} 2>/dev/null; then "
++            f'echo "[harbor cua-boot] app already serving"; '
++            f"elif [ -x /app/start.sh ]; then "
++            f'echo "[harbor cua-boot] booting /app/start.sh detached"; '
++            f"setsid bash /app/start.sh >/logs/verifier/ux-server.log 2>&1 < /dev/null & "
++            f"fi; "
++            f"for i in $(seq 1 120); do "
++            f"curl -fsS --max-time 2 -o /dev/null {quoted} 2>/dev/null && break; "
++            f"sleep 1; done"
++        )
++        try:
++            await self._environment.exec(command=boot, user="root", timeout_sec=140)
++        except Exception as exc:
++            logger.warning(
++                "CUA pre-stage app boot failed (%s); CUA will run against "
++                "whatever is (or isn't) serving at %s.",
++                exc,
++                url,
++            )
++
+     def _build_underlying_verifier(self, stage: VerifierConfig):
+         """Construct the legacy single-stage verifier for one stage's type."""
+         if stage.type is VerifierType.CUA:
