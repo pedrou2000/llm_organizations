@@ -1,8 +1,63 @@
+diff --git a/src/harbor/agents/computer_1/images.py b/src/harbor/agents/computer_1/images.py
+index 2780f8f..6623c45 100644
+--- a/src/harbor/agents/computer_1/images.py
++++ b/src/harbor/agents/computer_1/images.py
+@@ -46,8 +46,13 @@ async def fetch_screenshot_parts(
+     parts: list[dict[str, Any]] = []
+     for spath in paths:
+         try:
++            # timeout_sec is REQUIRED: without it the docker-compose exec falls
++            # through to an unbounded communicate() (docker.py _collect_buffered_
++            # output), so a wedged exec — e.g. when Chromium has crashed — hangs
++            # the whole CUA stage forever. 60s is ample to base64 one screenshot.
+             result = await environment.exec(
+                 command=f"base64 -w0 {spath} 2>/dev/null || base64 {spath}",
++                timeout_sec=60,
+             )
+             if result.return_code == 0 and result.stdout:
+                 b64_data = result.stdout.strip()
 diff --git a/src/harbor/agents/computer_1/providers/anthropic.py b/src/harbor/agents/computer_1/providers/anthropic.py
-index 8102db2..5142559 100644
+index 8102db2..aba1574 100644
 --- a/src/harbor/agents/computer_1/providers/anthropic.py
 +++ b/src/harbor/agents/computer_1/providers/anthropic.py
-@@ -274,6 +274,19 @@ class AnthropicProvider(StepProvider):
+@@ -14,7 +14,35 @@ import copy
+ import logging
+ from typing import TYPE_CHECKING, Any, cast, override
+ 
+-from anthropic import Anthropic, AnthropicBedrock
++from anthropic import (
++    Anthropic,
++    AnthropicBedrock,
++    APIConnectionError,
++    APIStatusError,
++    AsyncAnthropicBedrock,
++    InternalServerError,
++    RateLimitError,
++)
++
++# Transient Bedrock failures that should be retried (not fail the CUA stage):
++# 5xx server errors (InternalServerError, plus other >=500 via APIStatusError),
++# dropped connections, and rate limits. 4xx (bad request / auth) are excluded
++# so genuine errors still fail fast.
++_TRANSIENT_BEDROCK_ERRORS = (
++    InternalServerError,  # 500 (subclass of APIStatusError)
++    APIConnectionError,   # dropped/refused connection
++    RateLimitError,       # 429
++)
++
++
++def _is_transient_bedrock_error(exc: BaseException) -> bool:
++    """True for retryable Bedrock failures: the tuple above, plus any other
++    5xx (502/503/504) surfaced as a generic APIStatusError. 4xx fail fast."""
++    if isinstance(exc, _TRANSIENT_BEDROCK_ERRORS):
++        return True
++    if isinstance(exc, APIStatusError):
++        return getattr(exc, "status_code", 0) >= 500
++    return False
+ 
+ from harbor.agents.computer_1.providers.base import (
+     StepProvider,
+@@ -274,6 +302,38 @@ class AnthropicProvider(StepProvider):
      model_prefixes = ("bedrock/", "anthropic/")
      bedrock = False
  
@@ -19,10 +74,47 @@ index 8102db2..5142559 100644
 +    # The agent acts on the current view, so old screenshots are dead weight.
 +    BEDROCK_IMAGE_WINDOW = 12
 +
++    # Wall-clock bound for one Bedrock vision call, enforced in the event loop
++    # via asyncio.wait_for (see _call_api). The Bedrock route intermittently
++    # stalls on the response read; the anthropic client's timeout= does not
++    # interrupt the underlying read, so we drive the ASYNC client (cancellable)
++    # and retry with a fresh connection pool. Healthy calls return in 2-15s.
++    BEDROCK_CALL_TIMEOUT_SEC = 240.0
++    BEDROCK_CALL_RETRIES = 3
++
++    async def _reset_async_client(self) -> None:
++        """Replace a wedged async client (its pooled socket is stuck) so the
++        retry uses a fresh connection."""
++        old = getattr(self, "_aclient", None)
++        if old is not None:
++            try:
++                await old.close()
++            except Exception:
++                pass
++        self._aclient = self._new_async_bedrock_client()
++
      def __init__(
          self,
          *,
-@@ -349,14 +362,54 @@ class AnthropicProvider(StepProvider):
+@@ -290,9 +350,16 @@ class AnthropicProvider(StepProvider):
+         self._cua_beta, self._cua_tool_type = cua_protocol_for_model(self.model_name)
+         # Typed Any: Anthropic and AnthropicBedrock expose the same
+         # beta.messages.create surface through distinct resource classes.
++        self._aws_region = aws_region or "us-east-1"
+         self._client: Any
++        self._aclient: Any = None
+         if self.bedrock:
+-            self._client = AnthropicBedrock(aws_region=aws_region or "us-east-1")
++            self._client = AnthropicBedrock(aws_region=self._aws_region)
++            # Async client used by _call_api so a stalled Bedrock read can be
++            # truly cancelled by the event loop (see _call_api).
++            self._aclient = AsyncAnthropicBedrock(
++                aws_region=self._aws_region, max_retries=0
++            )
+         else:
+             self._client = Anthropic()
+         self._messages: list[dict[str, Any]] = []
+@@ -349,14 +416,54 @@ class AnthropicProvider(StepProvider):
              }
          ]
  
@@ -79,6 +171,73 @@ index 8102db2..5142559 100644
          for i in range(len(messages) - 1, -1, -1):
              msg = messages[i]
              if get_any(msg, "role") != "user":
+@@ -386,7 +493,65 @@ class AnthropicProvider(StepProvider):
+                 betas=[self._cua_beta],
+             )
+ 
+-        response = await asyncio.to_thread(_create)
++        # Bedrock route: drive the ASYNC client under asyncio.wait_for so a
++        # stalled response read (Bedrock accepts the connection but never returns
++        # headers) is truly cancelled by the event loop — the sync client's read
++        # runs in an uncancellable thread and would hang forever. On timeout,
++        # rebuild the client (fresh pool) and retry. Other routes: unchanged.
++        if self.bedrock:
++            last_exc: Exception | None = None
++            for attempt in range(self.BEDROCK_CALL_RETRIES + 1):
++                try:
++                    response = await asyncio.wait_for(
++                        self._aclient.beta.messages.create(
++                            model=self.model_name,
++                            max_tokens=4096,
++                            system=cast("Any", system),
++                            messages=cast("Any", messages),
++                            tools=cast("Any", self._tools),
++                            betas=[self._cua_beta],
++                        ),
++                        timeout=self.BEDROCK_CALL_TIMEOUT_SEC,
++                    )
++                    break
++                except (TimeoutError, asyncio.TimeoutError) as exc:
++                    last_exc = exc
++                    logger.warning(
++                        "CUA Bedrock call timed out after %ss (attempt %d/%d); "
++                        "rebuilding client and retrying",
++                        self.BEDROCK_CALL_TIMEOUT_SEC,
++                        attempt + 1,
++                        self.BEDROCK_CALL_RETRIES + 1,
++                    )
++                    await self._reset_async_client()
++                except (APIStatusError, APIConnectionError) as exc:
++                    # Bedrock intermittently returns 5xx / drops the connection
++                    # mid-session (a single such error otherwise aborts the whole
++                    # ~100-turn CUA stage). Treat 5xx/429/connection errors as
++                    # retryable: back off, rebuild the client, and try again.
++                    # 4xx (bad request, auth) are NOT transient -> re-raise fast.
++                    if not _is_transient_bedrock_error(exc):
++                        raise
++                    last_exc = exc
++                    logger.warning(
++                        "CUA Bedrock call failed with %s (attempt %d/%d); "
++                        "backing off and retrying: %s",
++                        type(exc).__name__,
++                        attempt + 1,
++                        self.BEDROCK_CALL_RETRIES + 1,
++                        str(exc)[:160],
++                    )
++                    await asyncio.sleep(min(30.0, 2.0 * (attempt + 1)))
++                    await self._reset_async_client()
++            else:
++                raise RuntimeError(
++                    f"CUA Bedrock call failed after "
++                    f"{self.BEDROCK_CALL_RETRIES + 1} attempts "
++                    f"(timeout={self.BEDROCK_CALL_TIMEOUT_SEC}s); "
++                    f"last error: {type(last_exc).__name__}"
++                ) from last_exc
++        else:
++            response = await asyncio.to_thread(_create)
+         # Accumulate usage for every call in the step, not just the final one,
+         # so auto-handled skip-action retries (which also incur cache-write
+         # cost) are reflected in the step metrics and AgentContext totals.
 diff --git a/src/harbor/agents/installed/codex.py b/src/harbor/agents/installed/codex.py
 index 6c39df5..878f7f0 100644
 --- a/src/harbor/agents/installed/codex.py
