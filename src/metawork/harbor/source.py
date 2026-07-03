@@ -8,7 +8,7 @@ renders each into the same blind `flat_text` + metadata row the judge consumes.
 It deliberately shares nothing with the published path (no web download, no
 JS-bundle parsing, no `harvest_<size>.parquet` schema): the published corpus is
 kept only for the observational study, and this path stands alone. The only
-durable dependency is the judge itself (`metawork.judge`), fed downstream by
+durable dependency is the judge itself (`metawork.judges.v1_fixed`), fed downstream by
 `judge_job.py`.
 
 Harbor trajectories are ATIF-v1.7:

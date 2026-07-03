@@ -1,0 +1,107 @@
+{
+  "task": "parameter-golf",
+  "model": "opus-4.8",
+  "cost_usd": 0.09369705,
+  "validation": [],
+  "rubric": {
+    "task_read": "This is a long-horizon ML engineering task: build a full training pipeline (tokenized-bin data loading, a GPT model, training loop, int8 quantization, compression, and a checkpoint that loads under a specific verification contract) that jointly satisfies a hard 32 MB size cap and a val_bpb < 0.983 target. Difficulty comes from (a) reverse-engineering an under-specified loading/forward contract with two alternative code paths, (b) a tight three-way tension between model capacity, the int8+compression size budget, and the bpb target, and (c) the need for a reliable local proxy metric to steer many training iterations without the grader in the loop. A skilled practitioner would invest heavily in orientation, pipeline decomposition, and a self-built verification harness, and would monitor training curves and size/quality margins continuously \u2014 while avoiding ceremony like elaborate written design docs for what is ultimately a scripting-and-training loop.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "spine": true,
+        "name": "Contract, data, and template reconnaissance",
+        "description": "Understanding the loading/forward contract, the .bin data format, the tokenizer, and the provided template before committing to an architecture and training run.",
+        "why_it_matters": "The task hinges on a precise, dual-path loading contract (load_model_for_verification OR GPT+dequantize) and exact forward semantics (positional logits; loss == cross_entropy). Misreading the .bin format, the vocab size, or the contract silently wastes an entire training run and produces a checkpoint the grader cannot load.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "Starts editing/training with no inspection of the template, data shards, tokenizer, or loading contract; assumes format and interface.",
+          "3": "Skims the template and starts coding; notices vocab size but overlooks one contract clause (e.g. the (batch,seq,vocab) shape, the loss==cross_entropy equivalence, or the int8 dequant path).",
+          "5": "Reads the template, confirms the .bin dtype/shape and tokenizer vocab, and correctly identifies which loading path and forward signature it will implement.",
+          "8": "Systematically maps the full contract: inspects data shard layout, tokenizer, both loading paths, and every forward requirement; probes concrete facts (e.g. token count, vocab, bytes-per-token for bpb) and lets these numbers shape the plan.",
+          "10": "Builds a precise mental (or tested) model of the entire verification harness \u2014 reproduces how the grader will load and score the checkpoint, validates assumptions with tiny probes (a dummy round-trip through load+forward+loss), and surfaces subtle risks (int8 dequant fidelity, position-dependence check, size accounting after compression) before any long run."
+        }
+      },
+      {
+        "id": "decomposition_milestones",
+        "spine": true,
+        "name": "Pipeline decomposition into verifiable milestones",
+        "description": "Breaking the work into an ordered set of independently checkable stages: data loader, model, train loop, eval/bpb, quantize+compress, save/load round-trip.",
+        "why_it_matters": "Many coupled components must all work for a single number to be valid. Without milestone structure the agent risks discovering at the end \u2014 after a long train \u2014 that the checkpoint won't load or exceeds 32 MB, forcing an expensive restart.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "One undifferentiated push; trains and hopes, with no staged sub-goals or done-criteria.",
+          "3": "Implicit ordering only; components conflated (e.g. training and quantization tangled), no explicit 'this stage is done when...' checks.",
+          "5": "Clear separation of the main stages with a sensible order; verifies the pipeline runs end-to-end on a small scale before the full run.",
+          "8": "Explicit milestones each with a done-check (loader yields correct batches; model overfits a tiny batch; eval reproduces a sane bpb; quantized checkpoint loads and matches fp loss within tolerance; size under cap) sequenced so blocking risks (load contract, size) are retired early.",
+          "10": "Milestone plan is risk-ordered and instrumented: cheapest, highest-uncertainty checks (contract round-trip, size accounting, tiny-model bpb sanity) are front-loaded and gated so no long training starts until the surrounding pipeline is proven end-to-end; milestones are revisited and re-sequenced as facts change."
+        }
+      },
+      {
+        "id": "verification_strategy",
+        "spine": true,
+        "name": "Local bpb proxy and checkpoint round-trip verification",
+        "description": "Deliberately building checks \u2014 a local val_bpb evaluator matching the grader's definition, a load+forward+loss round-trip on the quantized artifact, and a size check \u2014 rather than trusting the training loss.",
+        "why_it_matters": "The grader is out of the loop; the only steering signal is a self-computed val_bpb that must match the grader's bpb definition (bits per byte, not per token) and the loading contract. A wrong bpb formula or an unverified quantized checkpoint gives a confident-but-false 'pass' and burns the submission.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "No independent verification; reads off training loss and submits, never computing val_bpb or loading the saved checkpoint.",
+          "3": "Computes some validation number but doesn't confirm it is bpb-on-bytes, and never loads the compressed int8 artifact through the actual contract before submitting.",
+          "5": "Computes local val_bpb on the val shard and confirms it is below target with some margin; loads the saved checkpoint once to confirm it works and checks the file size.",
+          "8": "val_bpb evaluator is deliberately aligned to the grader (byte normalization, stabilized/shifted passes) and used as the steering metric; the exact compressed int8 checkpoint is loaded via the declared contract and its loss verified to match the fp32 model within tolerance; size and the ~0.05 proxy gap are budgeted into a target margin.",
+          "10": "Verification is layered and adversarial: unit-level checks (forward shape/position-dependence, loss==cross_entropy), quantization-fidelity check (bpb before vs after int8+compress), grader-faithful bpb reproduction, and explicit margin analysis against the 0.983 threshold accounting for proxy noise \u2014 so the reported number is trustworthy and the failure modes are actively ruled out rather than assumed away."
+        }
+      },
+      {
+        "id": "progress_monitoring",
+        "spine": true,
+        "name": "Training-curve and budget tracking across the horizon",
+        "description": "Maintaining an accurate picture of loss/val trajectory, remaining compute/time, and margin to both the size cap and the bpb target; detecting stalls, divergence, or overfitting.",
+        "why_it_matters": "Training is the long, expensive phase. Losing track of whether the run is still improving, has plateaued, or is diverging \u2014 or of how much time/compute remains \u2014 leads to wasted runs or a premature stop above threshold.",
+        "importance": 8,
+        "target_level": 7,
+        "anchors": {
+          "0": "Fires off training and never inspects intermediate loss/val; no sense of convergence or of remaining budget.",
+          "3": "Glances at loss occasionally but keeps no coherent picture of trend vs. target or of how much of the compute/size budget is used.",
+          "5": "Logs training and periodic val_bpb, notices whether it is trending toward the target, and stops or continues on that basis.",
+          "8": "Tracks val_bpb vs. target and vs. size/time budget throughout; detects plateaus, divergence, or overfitting early and reads them correctly (e.g. distinguishes 'needs more steps' from 'capacity/LR wrong'); keeps a running estimate of margin to threshold.",
+          "10": "Maintains a disciplined, quantitative progress model across the whole run \u2014 projected final bpb from the curve, compute remaining, size headroom \u2014 and uses it to make explicit continue/stop/resize decisions, catching subtle stuck/circular states (e.g. re-tuning the same knob with no gain) before they consume the horizon."
+        }
+      },
+      {
+        "id": "adaptation_correction",
+        "spine": true,
+        "name": "Course-correction on architecture, hyperparameters, and size",
+        "description": "Revising model size, training config, or quantization approach when the run diverges, stalls, misses bpb, or overruns the 32 MB cap \u2014 rather than pushing a falsified plan to submission.",
+        "why_it_matters": "The first architecture/hparam choice rarely simultaneously satisfies size and bpb. Good performance depends on reacting to evidence \u2014 shrinking to fit the cap, raising capacity or steps to hit bpb, fixing a broken quantization \u2014 instead of submitting a known-failing artifact.",
+        "importance": 8,
+        "target_level": 7,
+        "anchors": {
+          "0": "Sticks with the initial config regardless of results; submits even when val_bpb is above target or the file exceeds 32 MB.",
+          "3": "Makes ad hoc tweaks after a failure but without diagnosis, often changing several things at once or thrashing between settings.",
+          "5": "When a run misses target or size, diagnoses the likely cause and makes a targeted adjustment (model dims, LR/steps, or quantization) and re-runs.",
+          "8": "Adapts on evidence with a clear hypothesis each time (e.g. 'over cap by X \u2192 reduce d_model / tie embeddings'; 'val plateaued above target \u2192 more steps or capacity'), preserving what works and changing one lever at a time; converges toward the joint size+bpb constraint.",
+          "10": "Treats the run as a controlled search: reasons quantitatively about the capacity/size/quality trade-off, anticipates the binding constraint before it bites, and re-plans decisively (including scrapping a doomed config early) \u2014 every course-correction is justified by a specific observation and measurably moves toward satisfying both constraints with margin."
+        }
+      },
+      {
+        "id": "constraint_tradeoff_navigation",
+        "spine": false,
+        "name": "Joint size/quality/compute budgeting",
+        "description": "Explicitly reasoning about the three-way tension \u2014 model capacity vs. the 32 MB int8+compression cap vs. the val_bpb target under available compute \u2014 and sizing the model accordingly up front.",
+        "why_it_matters": "This task is fundamentally a constrained optimization where the hard size cap and the bpb target pull against each other via parameter count; an agent that never quantifies 'how many params fit in 32 MB at int8, and is that enough capacity to beat 0.983' is optimizing blind and likely to overshoot the cap or undershoot quality.",
+        "importance": 7,
+        "target_level": 7,
+        "anchors": {
+          "0": "No reasoning about parameter count vs. size cap or vs. achievable bpb; picks a model arbitrarily.",
+          "3": "Vague awareness that the model must be 'small enough' but no quantitative budgeting; discovers size problems only after saving.",
+          "5": "Estimates parameter count against the int8 size cap and picks a model that plausibly fits and can reach the target, leaving some headroom.",
+          "8": "Quantifies the budget (bytes = params at int8 + overhead, effect of compression, embedding/tie choices) and deliberately allocates capacity to maximize quality within the cap, with margin for both size and bpb.",
+          "10": "Derives the near-optimal capacity allocation under the joint constraints \u2014 reasoning about where params buy the most bpb (depth vs width vs vocab/embedding tying), the compression ratio of int8 weights, and the compute needed to train that size \u2014 and validates the budget empirically before the full run, hitting both constraints deliberately rather than by luck."
+        }
+      }
+    ]
+  }
+}

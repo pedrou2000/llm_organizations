@@ -15,7 +15,7 @@ import pandas as pd
 
 from common.concurrency import gather_with_progress
 
-from ..judge import DEFAULT_JUDGE_MODEL_LABEL, judge_trajectory
+from ..judges.v1_fixed import DEFAULT_JUDGE_MODEL_LABEL, judge_trajectory
 from .source import load_job
 
 # Metadata columns carried alongside the judge's rubric scores.
