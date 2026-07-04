@@ -1,0 +1,101 @@
+{
+  "task_read": "This is a very long-horizon, high-complexity build: a full Excel-clone product spanning an HTTP server with restart-durable persistence, a several-hundred-function Excel-365 formula engine (LET/LAMBDA, dynamic-array spilling, iterative calc, goal seek), dirty-only topological recompute under hard performance budgets, XLSX/CSV round-trips graded cell-by-cell against a LibreOffice corpus, a WebSocket collab protocol, a browser SPA with fixed testids, and a large analyst surface (names, formats, conditional formats, pivots, locale, validation). The exact wire contract is deliberately under-specified in prose and must be reverse-engineered from an existing first-party client (/dev_tests/helpers.py); the shipped smoke suite is non-exhaustive and grading is on a much larger hidden suite. A skilled practitioner would invest heavily and continuously in orientation, sequencing, self-built verification, and course-correction \u2014 meta-work is decisive here.",
+  "dimensions": [
+    {
+      "id": "orientation_research",
+      "spine": true,
+      "name": "Contract reverse-engineering & environment probing",
+      "description": "Extracting the exact wire shapes and behavioral contract from /dev_tests/helpers.py and run.sh, and probing library capabilities (OOXML I/O, formula-eval, WebSocket) before committing to an approach.",
+      "why_it_matters": "The JSON shapes, cell kind discriminator, spill fields, and listing envelope are defined ONLY by what helpers.py calls \u2014 prose is explicitly deferential to it. Acting before reading the client means building against an invented contract that the hidden suite will reject wholesale, and library choice (does the eval lib support LET/LAMBDA/spilling? does export stay openpyxl-readable?) constrains the entire design.",
+      "importance": 10,
+      "target_level": 9,
+      "anchors": {
+        "0": "Starts coding the server/engine without opening helpers.py; invents request/response shapes from the prose alone.",
+        "3": "Skims helpers.py once, copies a couple of obvious shapes, but misses spill fields, kind discriminator nuances, or the error-name contract; never checks what libraries can actually do.",
+        "5": "Reads helpers.py and run.sh to pin down the main endpoint shapes and runs the smoke suite early to anchor the contract; does a basic check that chosen libraries exist.",
+        "8": "Systematically maps every endpoint/shape helpers.py exercises (patch/fill/sort/filter bodies, spill anchor fields, listing envelope, collab frames), cross-references against the prose to spot gaps the client implies, and validates library capabilities (LET/LAMBDA, dynamic arrays, openpyxl round-trip fidelity) with quick spikes before designing around them.",
+        "10": "Builds a precise, documented model of the full contract from the client \u2014 including edge cases the prose leaves implicit (spill ghost semantics, locale canonicalization, validation-vs-formula-write rules) \u2014 and returns to re-probe helpers.py and library behavior whenever new subsystems surface, keeping orientation current across the whole horizon rather than front-loading it once."
+      }
+    },
+    {
+      "id": "decomposition_milestones",
+      "spine": true,
+      "name": "Subsystem sequencing & verifiable milestones",
+      "description": "Breaking a ~dozen-subsystem product into an ordered hierarchy of independently checkable milestones (health/persistence \u2192 cell model \u2192 recompute \u2192 formula catalog \u2192 features), each with an explicit done-condition.",
+      "why_it_matters": "The surface is enormous and interdependent: the formula engine underlies XLSX/collab/pivots; recompute correctness underlies everything. Without dependency-aware sequencing and milestone gates, the agent either builds features on an unverified core or thrashes across the catalog with nothing end-to-end working.",
+      "importance": 9,
+      "target_level": 9,
+      "anchors": {
+        "0": "No structure \u2014 jumps between random functions and features; no ordering, no notion of when a piece is 'done'.",
+        "3": "A flat to-do list of features with no dependency ordering and no explicit done-criteria per item.",
+        "5": "A sensible ordered plan that gets a walking skeleton (health, persistence, basic cells+recompute) before layering features, with rough milestones.",
+        "8": "Dependency-aware milestone hierarchy that stands up a testable core early, sequences subsystems so each builds on a verified predecessor, and attaches an explicit check to each milestone; defers hard/independent pieces (collab, XLSX, goal-seek) until their foundations hold.",
+        "10": "A living milestone structure that makes the walking skeleton demonstrably pass smoke tests before expansion, is re-ordered as dependencies and risks surface, and consistently isolates each subsystem behind a concrete acceptance check \u2014 enabling sustained forward progress across the full horizon without regressions in earlier milestones."
+      }
+    },
+    {
+      "id": "verification_strategy",
+      "spine": true,
+      "name": "Self-built correctness checks against Excel ground truth",
+      "description": "Deliberately constructing verification beyond the shipped smoke suite \u2014 running the live server, checking formula results against known Excel semantics, and validating XLSX/collab/spill behavior \u2014 since grading is on a hidden corpus.",
+      "why_it_matters": "The smoke suite is explicitly non-exhaustive and the hidden suite grades values cell-by-cell against LibreOffice. Assuming smoke-pass equals correct guarantees silent divergence across hundreds of functions, error propagation, spill mechanics, and round-trips. Only self-designed oracles catch these before grading.",
+      "importance": 10,
+      "target_level": 9,
+      "anchors": {
+        "0": "Never runs the server or tests; assumes code works.",
+        "3": "Runs dev_tests/run.sh occasionally and treats a green smoke run as done; no independent value checks.",
+        "5": "Runs the server and smoke suite, and spot-checks a handful of formulas and one round-trip by hand against expected Excel values.",
+        "8": "Builds its own targeted checks for high-risk areas \u2014 error-sentinel propagation, spill/ghost semantics, iterative-calc convergence, XLSX openpyxl re-read fidelity, collab seq ordering \u2014 and verifies representative functions across families against real Excel/LibreOffice-consistent expectations rather than trusting the smoke suite.",
+        "10": "Establishes a reusable verification harness that exercises subsystems cell-by-cell against ground-truth expectations, covers boundary/error cases the hidden suite is likely to probe, checks performance budgets empirically (1k chain, 100k import, 5k dependents), and re-runs it as a regression guard after each change \u2014 actively hunting for divergence rather than confirming success."
+      }
+    },
+    {
+      "id": "progress_monitoring",
+      "spine": true,
+      "name": "Coverage tracking across a vast surface",
+      "description": "Maintaining an accurate done-vs-remaining picture across dozens of function families and subsystems, and detecting when stuck on one area or regressing others.",
+      "why_it_matters": "With hundreds of functions and many subsystems over a long horizon, it is easy to lose the plot \u2014 over-polishing one function family, forgetting whole categories (engineering, distributions, database), or silently breaking recompute while adding features. Accurate progress tracking is what keeps breadth honest.",
+      "importance": 8,
+      "target_level": 8,
+      "anchors": {
+        "0": "No sense of what's done or left; discovers omissions only by accident.",
+        "3": "Vague mental tally; loses track of which function families or endpoints remain, revisits done work or forgets categories.",
+        "5": "Keeps a running checklist of subsystems/functions and updates it as pieces land, giving a roughly accurate remaining-work picture.",
+        "8": "Maintains a precise coverage map (per family and per endpoint), notices when it is thrashing or over-investing in one area, and rebalances; catches regressions in earlier subsystems via re-checks.",
+        "10": "Sustains a fully accurate, continuously updated picture of completion and risk across the entire surface, proactively flags stuck/circular states early and reallocates, and never lets a completed subsystem silently regress across the long build."
+      }
+    },
+    {
+      "id": "adaptation_correction",
+      "spine": true,
+      "name": "Course-correction on falsified assumptions",
+      "description": "Revising design, library choice, or approach when reality diverges \u2014 a formula-eval library that can't do LET/LAMBDA/spilling, an export that won't re-read in openpyxl, recompute that misses the performance budget, or a misread contract.",
+      "why_it_matters": "Early bets here are high-stakes and fallible: chosen libraries may not support Excel-365 semantics, naive recompute may blow the performance budgets, and the reverse-engineered contract may be wrong in spots. Barrelling ahead on a falsified assumption wastes large amounts of the horizon and cascades failures across dependent subsystems.",
+      "importance": 8,
+      "target_level": 8,
+      "anchors": {
+        "0": "Ignores contradicting evidence (failing tests, missing library features, perf misses) and keeps building on the broken assumption.",
+        "3": "Notices failures but patches symptoms locally without reconsidering the underlying approach.",
+        "5": "When a check fails or a library falls short, backs up and adjusts the approach for that subsystem, then re-verifies.",
+        "8": "Treats surprising failures as signals to revisit the design \u2014 e.g. swaps or wraps an inadequate eval/OOXML library, redesigns recompute to hit perf budgets, or corrects a misread wire shape \u2014 and propagates the fix to affected subsystems.",
+        "10": "Detects falsified assumptions early from its own verification, makes decisive well-scoped pivots (not flailing rewrites), documents why, and re-validates the blast radius \u2014 repeatedly steering the build back on course without losing accumulated progress."
+      }
+    },
+    {
+      "id": "coverage_allocation",
+      "spine": false,
+      "name": "Breadth-vs-depth effort allocation under a hidden suite",
+      "description": "Strategically proportioning finite effort across an enormous catalog and many optional-looking subsystems to maximize expected hidden-suite coverage, rather than perfecting a few areas while leaving whole categories absent.",
+      "why_it_matters": "The catalog is huge and grading is on an unseen, much larger suite, so marginal return comes from breadth of correct coverage, not from gold-plating one function family. Deciding where depth is worth it (recompute core, spill, error propagation) versus where breadth suffices (long tail of functions) is a distinct allocation judgment beyond ordering milestones.",
+      "importance": 7,
+      "target_level": 7,
+      "anchors": {
+        "0": "Sinks the whole budget into one area (e.g. perfecting a few math functions or the SPA) leaving most subsystems and function families unimplemented.",
+        "3": "Implements whatever is top-of-mind with no deliberate breadth/depth tradeoff; large obvious categories left untouched with no rationale.",
+        "5": "Consciously spreads effort to cover most subsystems and function families at a working level, accepting rough edges on the long tail.",
+        "8": "Makes explicit, sensible allocation calls \u2014 deep on the load-bearing, correctness-critical core (recompute, spill, errors, contract fidelity) and broad on the long tail \u2014 to maximize expected coverage of an unseen suite.",
+        "10": "Continuously re-prioritizes allocation from evidence (which areas are risky, which cheaply broaden coverage), demonstrably maximizing correct breadth while protecting the critical core, and avoids both over-investment in one corner and shallow coverage everywhere."
+      }
+    }
+  ]
+}

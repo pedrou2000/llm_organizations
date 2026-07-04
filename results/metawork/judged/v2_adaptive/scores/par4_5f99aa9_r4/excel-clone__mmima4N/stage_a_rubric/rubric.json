@@ -1,0 +1,101 @@
+{
+  "task_read": "A very large, long-horizon greenfield build: an Excel-class spreadsheet server + SPA + WebSocket collab + formula engine (~150 functions, LET/LAMBDA/dynamic-array spilling, iterative calc, goal seek) + xlsx/CSV round-trip + analyst surface (names, formats, CF, pivots, locale, validation). Difficulty comes from breadth (\u224815 loosely-coupled subsystems), a wire contract that is deliberately under-specified in prose and must be reverse-engineered from a provided Python client, hidden-suite grading against LibreOffice ground truth, and hard performance targets. No single agent can do all of it well, so calibrated meta-work \u2014 orientation on the contract, sequencing, self-built verification, and triage across breadth \u2014 is decisive rather than optional.",
+  "dimensions": [
+    {
+      "id": "orientation_research",
+      "spine": true,
+      "name": "Contract & semantics reverse-engineering",
+      "description": "Recovering the exact wire shapes from /dev_tests/helpers.py and run.sh, and grounding Excel-365 semantics (spill, error propagation, function behavior) before/while building rather than guessing.",
+      "why_it_matters": "The prose explicitly defers the JSON shapes to 'whatever the existing client already calls into.' Guessing the contract or Excel semantics wrong invalidates whole subsystems against the hidden suite; the payoff of reading the client first is enormous.",
+      "importance": 10,
+      "target_level": 9,
+      "anchors": {
+        "0": "Never opens helpers.py/run.sh; invents endpoint shapes and cell schemas from the prose alone.",
+        "3": "Skims the client once, picks up a couple of shapes, but codes most of the API from assumptions and only reacts when smoke tests fail.",
+        "5": "Reads helpers.py and run.sh, extracts the concrete request/response shapes (cell kind discriminator, patch/fill/sort bodies, listing envelope) and builds the core API to match; consults Excel semantics for the common functions.",
+        "8": "Systematically maps the full client surface to a contract inventory before committing to a design, cross-checks ambiguous shapes (spill anchor fields, ghost cells, collab event payload) against actual client calls, and probes edge semantics (error propagation order, spill occupancy, locale separators) deliberately rather than reactively.",
+        "10": "Treats the client as an executable spec: derives an internal contract model covering even rarely-exercised paths, resolves genuine ambiguities by running the client against a stub and observing, and continuously re-derives semantics from evidence (LibreOffice/Excel references) as new subsystems surface \u2014 orientation is sustained across the whole build, not front-loaded."
+      }
+    },
+    {
+      "id": "decomposition_milestones",
+      "spine": true,
+      "name": "Subsystem sequencing & milestone checkpoints",
+      "description": "Breaking ~15 subsystems into an ordered dependency-respecting plan (server+persistence+cell model \u2192 recompute \u2192 formula engine \u2192 spilling \u2192 collab/xlsx/analyst) with explicit done-checks per milestone.",
+      "why_it_matters": "Building spilling before a working dependency graph, or collab before persistence, causes rework and thrash. A dependency-aware milestone structure with concrete completion checks is what keeps a build this large from collapsing.",
+      "importance": 9,
+      "target_level": 8,
+      "anchors": {
+        "0": "Dives into functions/features in arbitrary order with no plan; no sense of prerequisites.",
+        "3": "A flat to-do list of features with no ordering rationale and no per-item done-criterion.",
+        "5": "A sensible ordering that puts foundational pieces (health/persistence/cell model/recompute) before dependent ones, with rough milestones tied to getting parts of dev_tests green.",
+        "8": "Explicit dependency-aware milestones, each with a concrete verification hook (endpoint responds, specific test passes, benchmark met) so 'done' is checkable; foundational correctness (topological dirty recompute) is nailed before layering features on it.",
+        "10": "A living milestone hierarchy that sequences by both dependency and risk (tackles contract-defining and highest-uncertainty pieces early), defines crisp exit criteria per milestone, and is revised as reality shifts \u2014 never a one-shot upfront list treated as immutable."
+      }
+    },
+    {
+      "id": "verification_strategy",
+      "spine": true,
+      "name": "Self-built verification beyond the smoke suite",
+      "description": "Deliberately constructing checks \u2014 known-value formula tests, xlsx round-trip via openpyxl, performance benchmarks, collab/spill behaviors \u2014 rather than trusting the non-exhaustive dev_tests.",
+      "why_it_matters": "dev_tests is explicitly a smoke suite; grading is a much larger hidden suite scored cell-by-cell against LibreOffice. An agent that only makes run.sh pass is blind to most of what it's graded on; building independent verification is the difference between adequate and strong.",
+      "importance": 10,
+      "target_level": 9,
+      "anchors": {
+        "0": "No verification, or only eyeballs that the server starts; never runs dev_tests.",
+        "3": "Runs dev_tests/run.sh and stops there; treats a green smoke suite as done.",
+        "5": "Runs the smoke suite and adds a few ad-hoc checks for features it built (spot-checks a formula result, confirms xlsx opens in openpyxl).",
+        "8": "Designs targeted verification for the risky, hidden-graded areas: known-answer tables for formula families, spill/ghost-write rejection, xlsx round-trip fidelity through openpyxl, restart-persistence, and at least sanity-level performance timing \u2014 checks it built, not just the ones handed to it.",
+        "10": "Establishes an independent oracle discipline: compares engine output to a trusted reference (openpyxl/LibreOffice or hand-computed Excel values) across function categories, tests error-propagation and edge semantics systematically, benchmarks against the stated performance envelopes, and re-runs the check suite after each subsystem to catch regressions across the long horizon."
+      }
+    },
+    {
+      "id": "progress_monitoring",
+      "spine": true,
+      "name": "Coverage tracking across the surface",
+      "description": "Maintaining an accurate done-vs-remaining picture across ~15 subsystems and ~150 functions, and detecting when stuck re-debugging one area.",
+      "why_it_matters": "With this much surface, losing the plot \u2014 forgetting whole subsystems, or burning the budget circling one broken function \u2014 is the dominant failure mode. Accurate progress tracking sustains forward motion.",
+      "importance": 8,
+      "target_level": 7,
+      "anchors": {
+        "0": "No tracking; loses track of what's built vs pending; repeats or abandons work.",
+        "3": "Vague mental model; discovers unbuilt subsystems late or by accident.",
+        "5": "Keeps a running list of completed vs pending subsystems and roughly follows it.",
+        "8": "Maintains an explicit, updated status of every subsystem and function category, notices when a single area is consuming disproportionate effort, and consciously time-boxes or moves on.",
+        "10": "Continuously reconciles claimed-done against actually-verified-done, catches circular debugging early and names it, and reallocates attention across the breadth based on a live read of coverage and remaining budget."
+      }
+    },
+    {
+      "id": "adaptation_correction",
+      "spine": true,
+      "name": "Course-correction on falsified assumptions",
+      "description": "Revising library choices, engine design, or contract assumptions when tests, performance, or round-trip fidelity reveal they're wrong \u2014 instead of forcing the original approach.",
+      "why_it_matters": "Many bets (formula-eval library, recompute architecture, xlsx layer) can prove inadequate against performance targets or semantic parity. Recognizing and pivoting, rather than barrelling ahead, protects the large downstream investment.",
+      "importance": 8,
+      "target_level": 8,
+      "anchors": {
+        "0": "Ignores contradicting evidence; keeps building on a broken foundation (e.g. wrong contract, non-topological recompute) to the end.",
+        "3": "Patches symptoms locally but never revisits the underlying design decision that caused them.",
+        "5": "When a test or benchmark clearly fails, fixes the responsible component, including modest reworks.",
+        "8": "Treats disconfirming evidence (a failing round-trip, a missed performance target, a mis-derived shape) as a signal to revisit the design, and makes deliberate structural changes early rather than accumulating workarounds.",
+        "10": "Anticipates likely failure points, validates risky bets (library capability, recompute complexity) with small probes before over-committing, and when reality diverges executes a clean, scoped pivot while preserving verified work \u2014 adaptive throughout, not just reactive at the end."
+      }
+    },
+    {
+      "id": "breadth_triage",
+      "spine": false,
+      "name": "Strategic breadth allocation under a fixed budget",
+      "description": "Deciding which subsystems/functions to build well, which to stub, and which to defer, given the surface is too large to fully complete and the hidden suite rewards broad correctness.",
+      "why_it_matters": "This task is effectively uncompletable in full; total score is maximized by covering high-value breadth (core CRUD, common functions, persistence, core recompute) at correctness before sinking budget into a few exotic corners (e.g. every distribution function, full CF/pivot polish). Wise allocation is a distinct meta-skill here.",
+      "importance": 7,
+      "target_level": 7,
+      "anchors": {
+        "0": "No prioritization: either polishes one corner exhaustively while core features are missing, or spreads so thin nothing works end-to-end.",
+        "3": "Implicit ordering by interest, not value; misjudges what the hidden suite most rewards.",
+        "5": "Prioritizes obviously foundational, high-frequency features (core cell CRUD, persistence, common formulas) before niche ones, roughly matching graded value.",
+        "8": "Makes explicit value/cost triage decisions \u2014 securing broad correctness across common paths before investing in exotic functions or deep polish \u2014 and consciously chooses to stub or defer low-value areas.",
+        "10": "Runs a deliberate, budget-aware allocation strategy: estimates graded value vs effort per subsystem, front-loads breadth of correct coverage, revisits the allocation as budget depletes, and can justify why each deferred/stubbed area was the right thing to sacrifice."
+      }
+    }
+  ]
+}

@@ -1,0 +1,996 @@
+[
+  {
+    "task_read": "A very large, long-horizon build: a full Excel-clone product spanning a persistent server, a JSON REST API, a formula engine with hundreds of functions plus dynamic-array spill, iterative calc and goal seek, WebSocket collaboration, an SPA, xlsx/csv round-trip, pivots, conditional formatting, data validation, locale input and defined names \u2014 all under performance budgets and graded on a hidden suite. The single hardest constraint is that the exact wire contract is undocumented and must be reverse-engineered from an existing client (`/dev_tests/helpers.py`), and correctness is judged against held-out LibreOffice ground truth the agent cannot see. This demands heavy, sustained meta-work: deep upfront orientation, aggressive decomposition/triage of an effectively unfinishable scope, self-built verification oracles, continuous progress tracking, and repeated course-correction as Excel-semantics assumptions get falsified.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "spine": true,
+        "name": "Contract & semantics reconnaissance",
+        "description": "Reading helpers.py/run.sh to recover the exact wire shapes before coding, and grounding Excel-365 semantics (spill, error propagation, LET/LAMBDA, functions) rather than guessing.",
+        "why_it_matters": "The wire shape (cell kinds, patch/fill/sort bodies, spill fields, listing envelope) is defined ONLY by the existing client, and the hidden suite grades against real Excel/LibreOffice behavior. Coding before recovering the contract guarantees systematic, whole-suite-invalidating divergence.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "Starts implementing endpoints and cell shapes from the prose alone; never opens helpers.py or run.sh.",
+          "3": "Skims helpers.py once, copies a couple of obvious shapes, but leaves most request/response fields, error names, and spill semantics as guesses.",
+          "5": "Reads helpers.py and run.sh, extracts the core cell/workbook/patch shapes and the health/listing contract, and notes the main error sentinels before building.",
+          "8": "Systematically maps every shape the client exercises (kind discriminator incl. spill ghosts, spill_range, fill/sort/filter/pivot bodies, names/settings), and cross-checks tricky Excel semantics (topo recompute, #SPILL! vs #CIRC!, criteria/wildcards) against concrete expected values rather than assumptions.",
+          "10": "Builds a durable, referenceable model of the contract and semantics (e.g. an inventory of endpoints/shapes/edge-cases tied to client call-sites), returns to it as ambiguities surface, and proactively probes underspecified corners (locale canonicalization, ghost-write rejection, xlsx openpyxl expectations) so downstream work rests on verified rather than assumed behavior."
+        }
+      },
+      {
+        "id": "decomposition_milestones",
+        "spine": true,
+        "name": "Component decomposition & done-criteria",
+        "description": "Breaking a multi-subsystem product into an ordered hierarchy of milestones (health/persistence \u2192 cell CRUD \u2192 engine \u2192 dynamic arrays \u2192 collab \u2192 SPA \u2192 xlsx \u2192 analyst surface), each with an explicit way to know it is complete.",
+        "why_it_matters": "The surface is enormous and interdependent (spill depends on the engine, xlsx depends on formats/names, collab depends on patch responses). Without ordered milestones with done-checks, the agent thrashes across half-built subsystems and can't tell what actually works.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "One undifferentiated push; no sub-goals, no sense of ordering or completion criteria.",
+          "3": "A flat, vague list ('do engine, do API, do UI') with no ordering rationale and no per-item definition of done.",
+          "5": "A sensible ordered breakdown into major subsystems with a rough dependency order and informal done-criteria for each.",
+          "8": "A dependency-aware milestone plan sequencing foundational pieces (persistence, cell CRUD, recompute) before dependents (spill, collab, xlsx), each milestone paired with a concrete completion check (a passing dev test or endpoint probe).",
+          "10": "A living, hierarchical milestone structure that is explicitly re-ordered as dependencies and difficulty are discovered, with crisp verifiable exit criteria per milestone and clear tracking of which are truly closed versus provisional \u2014 sustained across the whole horizon."
+        }
+      },
+      {
+        "id": "verification_strategy",
+        "spine": true,
+        "name": "Self-built correctness checks & oracles",
+        "description": "Deliberately building verification beyond the non-exhaustive smoke suite \u2014 running run.sh, exercising endpoints, and constructing oracles for Excel-value correctness, spill/error semantics, xlsx round-trip, and performance budgets.",
+        "why_it_matters": "The provided tests are explicitly a small smoke suite; grading is a much larger hidden suite plus LibreOffice ground truth. An agent that trusts run.sh passing will silently fail hundreds of ungraded cases; only self-designed checks reveal correctness.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "No verification, or assumes code is correct because it runs; never executes run.sh.",
+          "3": "Runs run.sh occasionally and eyeballs a few responses; no checks for the many behaviors the smoke suite omits.",
+          "5": "Runs the dev suite, manually exercises the main endpoints, and spot-checks a handful of formula results and error cases against known Excel answers.",
+          "8": "Builds targeted checks beyond the given suite: independent expected-value cases for function families and spill/error semantics, xlsx re-import verification via openpyxl, and explicit performance probes against the stated budgets.",
+          "10": "Establishes a systematic verification harness treated as a first-class deliverable \u2014 e.g. a reference oracle for formula values, round-trip and idempotency checks, cycle/iterative-calc and goal-seek convergence tests, and restart-persistence checks \u2014 run repeatedly so regressions surface immediately rather than at grading time."
+        }
+      },
+      {
+        "id": "progress_monitoring",
+        "spine": true,
+        "name": "Coverage tracking across the horizon",
+        "description": "Maintaining an accurate, current picture of which subsystems/functions are done, passing, stubbed, or broken, and detecting when effort is stuck or circling on one corner.",
+        "why_it_matters": "With hundreds of functions and a dozen subsystems over a long horizon, it is easy to lose the plot \u2014 re-polishing one function family while whole endpoints remain unimplemented, or believing something works after it silently regressed.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "No tracking; forgets what is done vs pending; repeats or abandons work unknowingly.",
+          "3": "Vague mental tracking; discovers only late that major pieces are missing or regressed.",
+          "5": "Keeps a running checklist of subsystems/tests and updates it as pieces land, with a roughly accurate done-vs-remaining view.",
+          "8": "Maintains an explicit, frequently-updated status of every major area (implemented/passing/stubbed/broken), and notices stalls or repeated failures, redirecting effort deliberately rather than grinding.",
+          "10": "Sustains a precise, continuously-reconciled ledger of coverage tied to verification results across the full build, catching silent regressions and thrash early and using remaining-budget awareness to steer allocation to the highest-value gaps."
+        }
+      },
+      {
+        "id": "adaptation_correction",
+        "spine": true,
+        "name": "Course-correction on falsified assumptions",
+        "description": "Revising design or approach when Excel semantics, the recovered contract, library behavior, or performance reality diverges from expectation \u2014 rather than barrelling ahead.",
+        "why_it_matters": "Many assumptions here are likely wrong on first pass (spill materialization, dirty-only topo recompute, locale canonicalization, xlsx/openpyxl fidelity, dep-graph performance). Detecting and reworking these mid-flight is what separates a working product from one that fails whole categories.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "Ignores contradicting evidence; keeps building on a falsified assumption; repeats the same failing fix.",
+          "3": "Makes local patches to symptoms without revisiting the underlying wrong assumption or design.",
+          "5": "When a check fails or a shape mismatches, diagnoses and fixes it, adjusting the immediate approach.",
+          "8": "Treats surprising failures as signals to revisit design decisions (e.g. reworking the recompute/dep-graph model, spill anchoring, or xlsx serialization) and updates the plan accordingly instead of piling on workarounds.",
+          "10": "Runs tight hypothesis-driven correction loops throughout: isolates root causes, chooses between rework and workaround on principled grounds (correctness vs budget), and propagates the correction back into the contract model, milestones, and verification \u2014 demonstrably avoiding circular re-debugging."
+        }
+      },
+      {
+        "id": "scope_triage",
+        "spine": false,
+        "name": "Coverage-maximizing scope triage",
+        "description": "Allocating finite effort across an effectively unfinishable spec to maximize expected correctness on the hidden suite \u2014 deciding what to build fully, what to stub, and what to defer.",
+        "why_it_matters": "The spec is far larger than any single session can perfect. Skilled prioritization \u2014 foundational engine + high-frequency functions + the endpoints the client exercises, before exotic distributions/engineering functions \u2014 is decisive for the graded outcome, and is distinct from merely sequencing dependencies.",
+        "importance": 7,
+        "target_level": 7,
+        "anchors": {
+          "0": "Rabbit-holes on a narrow corner (e.g. one exotic function family or UI polish) while core subsystems remain absent, with no cost/value reasoning.",
+          "3": "Implements in arbitrary spec order with no sense of which pieces carry the most graded weight.",
+          "5": "Prioritizes obviously foundational and high-frequency capabilities first and defers clearly niche ones, with implicit reasoning.",
+          "8": "Makes explicit value-vs-cost triage calls (breadth of common functions and core endpoints before rare distributions/engineering/financial edge cases), and consciously ships coherent partial coverage rather than one perfect subsystem.",
+          "10": "Continuously rebalances allocation against observed coverage and remaining budget, articulating why each next chunk maximizes expected hidden-suite score, and deliberately trades depth for breadth (or vice versa) where the payoff is highest."
+        }
+      }
+    ]
+  },
+  {
+    "task_read": "An enormous, long-horizon build: a full Excel-clone product (persistent HTTP server + SPA + JSON API + WebSocket collab) whose formula engine spans hundreds of functions, Excel-365 dynamic arrays/spill/LET/LAMBDA, dirty-only recompute under hard performance budgets, XLSX/CSV round-trip against a LibreOffice ground-truth, plus pivots, conditional formatting, locale input, validation, iterative calc, and goal seek. The exact wire contract is deliberately under-specified \u2014 it must be reverse-engineered from an existing client (/dev_tests/helpers.py) \u2014 and grading is a large hidden suite, so a skilled practitioner must invest heavily and continuously in orientation, decomposition, self-built verification, progress tracking, and adaptation. This is near the ceiling of meta-work demand.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "spine": true,
+        "name": "Contract & semantics reverse-engineering",
+        "description": "Extracting the exact wire shapes from helpers.py/run.sh and pinning down Excel semantics before and while building, rather than guessing the API or function behavior.",
+        "why_it_matters": "The whole contract (workbook ids, cell shapes, patch/fill/sort bodies, kind discriminator, spill fields, listing envelope) lives in the first-party client, and grading is a hidden suite; getting Excel error/spill/lookup semantics right requires deliberate study. Building blind guarantees systematic mismatch.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "Starts coding the server/engine without ever reading helpers.py or run.sh; invents its own API shapes.",
+          "3": "Skims helpers.py once, extracts a few endpoint names, but leaves cell shapes, spill fields, and error-name conventions to guesswork.",
+          "5": "Reads helpers.py and run.sh, catalogs the concrete request/response shapes and error names actually exercised, and notes the Excel behaviors it must match for the core cases before building.",
+          "8": "Systematically derives the full observable contract from the client (every shape, the kind discriminator, spill anchor fields, listing envelope), and proactively researches ambiguous Excel semantics (spill/#SPILL!, error propagation order, wildcard criteria, iterative fixed-point) rather than assuming \u2014 capturing findings for reuse.",
+          "10": "Sustained, layered investigation: reconstructs the exact contract AND builds a reusable reference for the hard semantic corners (dynamic-array spill materialization, lookup family edge cases, XLSX round-trip expectations vs LibreOffice), revisits the client whenever a new subsystem is touched, and resolves under-specified points by probing rather than assuming \u2014 leaving essentially no guessed-at behavior."
+        }
+      },
+      {
+        "id": "decomposition_milestones",
+        "spine": true,
+        "name": "Subsystem decomposition & verifiable milestones",
+        "description": "Breaking the sprawling product into ordered, dependency-aware subsystems each with an explicit done-check, and standing up a working vertical slice before elaborating.",
+        "why_it_matters": "The task has a dozen loosely-coupled subsystems (server/persistence, engine, spill, XLSX, collab, analyst surface) with real ordering constraints (engine before XLSX values; core cells before collab/pivot). Treating it as one push guarantees a half-working sprawl with nothing end-to-end.",
+        "importance": 9,
+        "target_level": 9,
+        "anchors": {
+          "0": "No structure; jumps between random features with no sequencing or completion criteria.",
+          "3": "A flat undifferentiated list of functions to implement, no dependency ordering, no per-milestone done-check.",
+          "5": "Identifies the major subsystems and tackles them in a sensible order (get server+health+persistence up, then core cell/formula, then advanced surfaces), with rough completion criteria.",
+          "8": "A dependency-aware milestone plan that lands a thin end-to-end slice early (bootable server, health, a literal round-trip passing run.sh) then layers subsystems, each milestone with an explicit verifiable exit condition and honest handling of cross-cutting concerns (recompute, spill, XLSX) as their own tracked units.",
+          "10": "A crisp, continuously-maintained hierarchy of milestones with explicit done-checks, correct sequencing of the deep dependencies (topo recompute \u2192 spill \u2192 dynamic arrays \u2192 XLSX values; core \u2192 collab/pivot), an early always-green vertical slice, and deliberate re-scoping of milestone granularity as complexity is discovered \u2014 never a big-bang integration."
+        }
+      },
+      {
+        "id": "verification_strategy",
+        "spine": true,
+        "name": "Self-built verification beyond the smoke suite",
+        "description": "Deliberately constructing checks (against live server, Excel/LibreOffice ground truth, performance budgets) that go well beyond the non-exhaustive run.sh, rather than assuming green smoke tests mean correctness.",
+        "why_it_matters": "run.sh is explicitly non-exhaustive and grading is a much larger hidden suite with cell-by-cell value checks against LibreOffice plus hard performance targets. Only agent-designed verification can catch the gap between passing smoke tests and being actually correct.",
+        "importance": 10,
+        "target_level": 10,
+        "anchors": {
+          "0": "Never runs the server or run.sh; declares features done by inspection.",
+          "3": "Runs run.sh and treats a green smoke suite as proof of completeness; no independent checks, no performance measurement.",
+          "5": "Runs the live server and run.sh, and spot-checks a few of its own cases (some functions, an error sentinel, a restart-persistence check) beyond the smoke suite.",
+          "8": "Builds targeted checks for high-risk areas the smoke suite won't cover \u2014 cross-checks formula results against known Excel values, verifies XLSX round-trip with openpyxl, exercises spill/error/collab edge cases, and actually measures against the stated performance budgets \u2014 using these as regression gates while building.",
+          "10": "Establishes a systematic verification harness early and sustains it: independent oracles for engine correctness (Excel/LibreOffice values), round-trip and re-import checks, concurrency/last-write-wins checks for collab, and instrumented performance tests against each budget \u2014 deliberately probing the corners a hidden suite would target and treating discovered failures as first-class signal rather than trusting the smoke suite."
+        }
+      },
+      {
+        "id": "progress_monitoring",
+        "spine": true,
+        "name": "Coverage tracking across a huge surface",
+        "description": "Maintaining an accurate, current picture of which of the many subsystems/functions are done, in-progress, or broken, and detecting when stuck on one corner.",
+        "why_it_matters": "With hundreds of functions and a dozen subsystems over a long horizon, it is easy to lose the plot, forget whole feature areas, or burn the budget re-debugging one function while others are untouched. Accurate accounting is what sustains broad progress.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "No sense of what is done vs remaining; repeatedly rediscovers or forgets whole feature areas.",
+          "3": "Vague mental tracking; loses track of which subsystems are finished, occasionally loops on the same failure without noticing.",
+          "5": "Keeps a running checklist of subsystems/functions and updates it as they land, giving a roughly accurate done-vs-remaining view.",
+          "8": "Maintains a live, accurate ledger of status across all subsystems and the function catalog, notices when a single area is consuming disproportionate effort, and consciously redirects to preserve breadth of coverage.",
+          "10": "Continuously reconciles plan against reality across the whole surface, flags stuck/thrashing states early with a concrete diagnosis, and rebalances attention deliberately across many competing subsystems so nothing silently rots or is forgotten over the long horizon."
+        }
+      },
+      {
+        "id": "adaptation_correction",
+        "spine": true,
+        "name": "Course-correction on falsified assumptions",
+        "description": "Revising approach, library choice, or design when a reverse-engineered assumption, a performance budget, or an XLSX/semantic expectation turns out wrong \u2014 instead of pushing ahead.",
+        "why_it_matters": "So much is inferred (contract, Excel edge cases) and constrained (dirty-only recompute perf, openpyxl-readable XLSX, iterative fixed-point) that early assumptions will be falsified; a naive recompute or a wrong library choice must be recognized and reworked rather than patched over.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "Ignores contradicting evidence (failing tests, wrong values, blown perf budgets) and keeps building on the falsified design.",
+          "3": "Reacts only with local patches to symptoms; never revisits an underlying design decision even when it clearly doesn't fit.",
+          "5": "When a test or check fails, diagnoses and fixes it, and will change a specific approach when clearly wrong.",
+          "8": "Recognizes when a root assumption is falsified (e.g. recompute strategy can't meet the budget, a library won't round-trip, an inferred shape is wrong) and reworks the design rather than piling on patches, re-verifying afterward.",
+          "10": "Treats divergence as signal throughout: proactively re-tests assumptions, makes decisive structural pivots (recompute architecture, OOXML/eval library, spill model) when evidence demands, and propagates the consequences of a correction across affected subsystems \u2014 never barrelling ahead on a known-broken premise."
+        }
+      },
+      {
+        "id": "coverage_allocation",
+        "spine": false,
+        "name": "Expected-coverage prioritization under vast scope",
+        "description": "Consciously allocating limited effort to maximize graded coverage across an enormous feature surface \u2014 securing broad working functionality before deep-polishing any one corner.",
+        "why_it_matters": "The spec is far larger than can be perfected; a hidden suite rewards breadth of correct behavior. Deciding what to build, in what order, to maximize expected passing coverage is a distinct allocation decision beyond merely decomposing the work.",
+        "importance": 7,
+        "target_level": 8,
+        "anchors": {
+          "0": "Sinks the whole budget into one narrow area (e.g. perfecting exotic functions) leaving most subsystems absent.",
+          "3": "Follows the spec order mechanically with no sense of cost/coverage tradeoff; over-invests in low-yield corners.",
+          "5": "Roughly prioritizes high-value, broadly-exercised functionality (core cells, common functions, persistence) ahead of niche features.",
+          "8": "Makes explicit cost/benefit calls about where effort buys the most graded coverage, gets a wide band of features minimally working before deepening, and defers or time-boxes low-probability corners.",
+          "10": "Sustains a deliberate coverage-maximizing allocation throughout \u2014 continuously reassessing which remaining work yields the most correctness per unit effort, avoiding both perfectionism on any one subsystem and neglect of whole high-value areas, and adjusting the allocation as time and discoveries dictate."
+        }
+      }
+    ]
+  },
+  {
+    "task_read": "This is an extreme long-horizon build: a full Excel-clone product spanning a 100+ function formula engine, dynamic-array spill, an incremental dependency-graph recompute engine with hard performance budgets, REST + WebSocket collab, an SPA, xlsx round-trip, pivots, conditional formatting, data validation, locale, goal seek and iterative calc. The wire contract is under-specified in prose and must be reverse-engineered from an existing client (`/dev_tests/helpers.py`), and grading is against a large hidden suite over LibreOffice ground truth. Because the surface is vast and time is finite, a skilled practitioner must invest heavily in orientation, decomposition/sequencing, self-built verification, and continuous progress tracking \u2014 meta-work is decisive here, so nearly every dimension warrants a high target and high importance.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "spine": true,
+        "name": "Contract reverse-engineering & environment probing",
+        "description": "Extracting the exact wire shapes, cell discriminators, and behavioral contract from the existing client/helpers and smoke suite before and while building, rather than guessing the API.",
+        "why_it_matters": "The spec explicitly defers the wire shape to `/dev_tests/helpers.py`; misreading it means every endpoint fails the hidden suite regardless of engine quality. Excel semantics (error propagation, spill, LWW) also need grounding.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "Starts coding endpoints from the prose alone; never opens helpers.py or run.sh.",
+          "3": "Skims helpers.py once, copies a few obvious shapes, but leaves major contracts (spill fields, patch response, collab event) inferred/guessed.",
+          "5": "Reads helpers.py and dev_tests to pin down the core request/response shapes and runs the smoke suite early to confirm the baseline contract.",
+          "8": "Systematically maps the full client surface (cell kinds incl. spill, patch/fill/sort/filter bodies, listing envelope, collab hello/op/event, names/pivot/CF/validation payloads) to a working model, and probes Excel/LibreOffice semantics for the hard corners (error precedence, YEARFRAC bases, spill ghost rules) before committing designs.",
+          "10": "Sustained, source-driven reverse-engineering: treats helpers.py as the authoritative contract, cross-checks ambiguous behaviors against real Excel/LibreOffice ground truth, revisits it whenever a hidden-suite-style edge case surfaces, and documents the inferred contract so later feature work stays consistent."
+        }
+      },
+      {
+        "id": "decomposition_milestones",
+        "spine": true,
+        "name": "Feature-surface decomposition & sequencing",
+        "description": "Breaking the huge surface into an ordered set of independently-verifiable milestones (server skeleton \u2192 recompute core \u2192 formula catalog \u2192 advanced surfaces) each with a done-check, and sequencing for maximum coverage.",
+        "why_it_matters": "With dozens of loosely-coupled features and a hidden suite, poor sequencing (e.g. building pivots before a working recompute engine) strands effort; good ordering front-loads the foundation everything else depends on.",
+        "importance": 9,
+        "target_level": 9,
+        "anchors": {
+          "0": "No structure; jumps between features (a function here, a websocket handler there) with no ordering or completion criteria.",
+          "3": "A flat undifferentiated to-do list of features with no dependency ordering and no per-item done-check.",
+          "5": "A sensible phased plan (health endpoint + persistence first, then dep-graph/recompute, then function families, then advanced surfaces) with rough milestones.",
+          "8": "Milestones ordered by dependency and risk, each with an explicit verification hook, foundational infrastructure (recompute, cell model, persistence) deliberately built and proven before the many features that ride on it, and breadth-vs-depth tradeoffs made explicitly.",
+          "10": "A living, dependency-aware milestone hierarchy that maximizes hidden-suite coverage per unit effort, isolates high-risk/high-value items (spill engine, xlsx round-trip, collab LWW) early, keeps the system runnable at every milestone, and is re-sequenced as estimates prove wrong."
+        }
+      },
+      {
+        "id": "verification_strategy",
+        "spine": true,
+        "name": "Self-built verification against Excel ground truth",
+        "description": "Deliberately building checks beyond the non-exhaustive smoke suite \u2014 targeted tests for formula correctness, spill, error sentinels, performance budgets, xlsx re-import, and collab \u2014 anticipating the hidden suite.",
+        "why_it_matters": "dev_tests is explicitly a non-exhaustive smoke suite and grading is a much larger hidden corpus with numeric performance budgets; passing only the smoke suite guarantees nothing. The agent must manufacture its own oracle.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "Assumes success; runs nothing, or only eyeballs the SPA.",
+          "3": "Runs run.sh and treats a green smoke suite as done; no self-authored checks.",
+          "5": "Runs the smoke suite plus a handful of own ad-hoc checks on the riskiest pieces (a formula or two, a restart-persistence check).",
+          "8": "Builds targeted verification for each risky subsystem \u2014 function-family spot-checks against known Excel values, spill/ghost rejection, error-sentinel propagation, restart persistence, and actual measurement against the stated performance budgets (100k import <30s, 5k dependents <2s) and xlsx openpyxl re-import.",
+          "10": "Establishes an independent ground-truth oracle (real Excel/LibreOffice expected values) and a broad regression harness covering error precedence, dynamic-array edge cases, collab concurrency/LWW, locale round-trip, and goal-seek/iterative convergence \u2014 verification designed to catch exactly the classes of case the hidden suite would probe, and re-run as features land."
+        }
+      },
+      {
+        "id": "progress_monitoring",
+        "spine": true,
+        "name": "Coverage tracking across a vast surface",
+        "description": "Maintaining an accurate done-vs-remaining picture across the many feature families and detecting stuck/thrashing states (e.g. re-debugging the same recompute bug in circles).",
+        "why_it_matters": "The surface is far too large to hold in mind; without an explicit ledger the agent silently drops function families or endpoints, and on a horizon this long circular debugging quietly burns the whole budget.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "No tracking; loses track of which of the dozens of functions/endpoints are done, silently leaves whole families unbuilt.",
+          "3": "Vague mental sense of progress; periodically rediscovers forgotten requirements late.",
+          "5": "Keeps a checklist of major features and updates it as they complete.",
+          "8": "Maintains a granular, current ledger of function catalog + endpoints + surfaces with status, and notices when it is stuck on one subsystem (e.g. spill or xlsx) rather than grinding indefinitely.",
+          "10": "Continuous, accurate accounting of the entire surface against the spec, explicit detection of thrash/circular debugging with a decision to change tactic or defer, and deliberate rebalancing of remaining effort toward the highest-coverage gaps as the budget shrinks."
+        }
+      },
+      {
+        "id": "adaptation_correction",
+        "spine": true,
+        "name": "Course-correction on falsified assumptions",
+        "description": "Revising design, contract interpretation, or approach when tests, performance measurements, or client behavior contradict expectations \u2014 rather than barrelling ahead.",
+        "why_it_matters": "Many early assumptions (naive full recompute, a wrong-guessed patch shape, a formula library that can't hit spill or perf) will be falsified; the ability to notice and re-architect distinguishes a working product from one that thrashes at scale.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "Ignores contradicting evidence; keeps a falsified approach (e.g. O(n) full recompute) even after it blows the perf budget.",
+          "3": "Patches symptoms locally (adds special-cases) without revisiting the flawed underlying assumption.",
+          "5": "When a test or measurement fails, diagnoses and fixes the real cause for that subsystem.",
+          "8": "Recognizes when an assumption is structurally wrong (recompute algorithm, chosen OOXML/eval library, contract misread) and re-architects deliberately rather than piling on workarounds, updating dependent plans accordingly.",
+          "10": "Treats surprises as signal: proactively re-tests assumptions against ground truth, makes decisive pivots (swapping approach/library, redesigning the dependency engine to meet budgets) early and cleanly, and propagates the consequences through the plan and prior work without losing coherence."
+        }
+      }
+    ]
+  },
+  {
+    "task_read": "An extremely long-horizon, high-breadth build: a full Excel-clone product (persistent HTTP server + JSON API, a formula engine with hundreds of functions, Excel-365 dynamic arrays/LET/LAMBDA/spilling, dirty topological recompute under performance budgets, SPA, WebSocket collab, xlsx round-trip, and a large analyst surface). The wire contract is deliberately under-specified in prose and instead pinned by an existing client at /dev_tests/helpers.py, with only a non-exhaustive smoke suite provided and a much larger hidden suite graded against LibreOffice ground truth. This demands heavy, sustained meta-work: reverse-engineering the contract, foundation-first sequencing across a vast surface, self-built verification beyond the smoke tests, disciplined progress tracking, course-correction on falsified semantics, and shrewd allocation of effort across breadth that cannot be fully covered.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "spine": true,
+        "name": "Contract & environment reverse-engineering",
+        "description": "Reading /dev_tests/helpers.py and run.sh to recover exact request/response shapes, probing library options and Excel/LibreOffice semantics before committing to an implementation.",
+        "why_it_matters": "The wire shape (ids, cell kinds, spill fields, patch/fill/sort bodies, listing envelope) is defined only by the existing client \u2014 building the API from the prose alone guarantees mismatches the hidden suite will catch. Semantics are graded against LibreOffice, so understanding exact behaviors upfront prevents large rework.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "Starts coding endpoints/engine straight from the prose; never opens helpers.py or run.sh.",
+          "3": "Skims helpers.py once for a couple of shapes but guesses most of the contract and error names.",
+          "5": "Reads helpers.py and run.sh to pin the core cell/patch/listing shapes and the discriminator, and identifies chosen libraries (e.g. openpyxl) before building.",
+          "8": "Systematically extracts the full contract from the client (spill anchor fields, error-name mapping, fill/sort/filter/pivot/collab bodies), and probes ambiguous Excel semantics (spill propagation, criteria/wildcards, iterative fixed-point) against known ground truth before implementing.",
+          "10": "Builds a durable, referenced model of the entire contract and the trickiest semantics, keeps returning to helpers.py as new surfaces are reached, and pre-empts divergences (locale canonicalization, xlsx openpyxl-readability requirements, LWW-by-seq) that only surface late \u2014 orienting continuously rather than once."
+        }
+      },
+      {
+        "id": "decomposition_milestones",
+        "spine": true,
+        "name": "Foundation-first decomposition across a vast surface",
+        "description": "Breaking the product into an ordered hierarchy of milestones (server skeleton+health+persistence \u2192 cell/formula model \u2192 parser/evaluator \u2192 recompute \u2192 function catalog \u2192 dynamic arrays/spill \u2192 REST \u2192 SPA \u2192 collab \u2192 analyst surface \u2192 xlsx \u2192 goal seek), each with an explicit done-check.",
+        "why_it_matters": "Dozens of interdependent subsystems with a shared engine core mean wrong ordering (e.g. building xlsx or collab before recompute works) causes cascading rework. Explicit milestones with done-criteria are the only way to sustain progress over this horizon.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "No plan; jumps between unrelated features (a few functions, then a UI bit, then collab) with no ordering.",
+          "3": "A flat undifferentiated list of features with no dependency ordering or done-criteria.",
+          "5": "A sensible sequence that builds the server/engine core before dependent features, with rough milestones for the major subsystems.",
+          "8": "A dependency-aware milestone hierarchy where each milestone has a concrete acceptance check (health returns ok, chain recomputes, spill materializes, smoke suite section passes), sequenced so later surfaces reuse a proven core.",
+          "10": "A living, re-sequenced plan that isolates the highest-leverage core (parse\u2192dependency graph\u2192topo recompute) as a verified spine, layers the breadth on top in dependency order, and adjusts milestone boundaries as real coupling is discovered \u2014 never thrashing on a not-yet-supported dependency."
+        }
+      },
+      {
+        "id": "verification_strategy",
+        "spine": true,
+        "name": "Verification beyond the smoke suite",
+        "description": "Deliberately designing checks \u2014 running dev_tests continuously, exercising the live server, cross-checking values against Excel/LibreOffice semantics, validating xlsx via openpyxl round-trip \u2014 rather than trusting the provided smoke tests.",
+        "why_it_matters": "The smoke suite is explicitly non-exhaustive and grading is a hidden suite against a held-out LibreOffice corpus. An agent that only greens run.sh will silently miss most of the graded surface (exotic functions, spill/error propagation, xlsx fidelity, collab ordering).",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "No verification; assumes code works, or never runs the server/tests.",
+          "3": "Runs run.sh occasionally; treats a green smoke suite as done.",
+          "5": "Runs the smoke suite and manually hits key endpoints on the live server to confirm core flows work.",
+          "8": "Builds own targeted checks for high-risk areas the smoke suite won't cover \u2014 spill/error propagation, criteria+wildcards, recompute performance budgets, xlsx re-import via openpyxl, collab seq ordering \u2014 and verifies computed values against Excel-correct expectations.",
+          "10": "Runs a sustained verification loop with self-authored oracles (e.g. comparing engine output to known LibreOffice/Excel results across function families and edge sentinels), catches subtle semantic bugs the provided tests miss, and treats coverage gaps as first-class risks to close rather than assuming correctness."
+        }
+      },
+      {
+        "id": "progress_monitoring",
+        "spine": true,
+        "name": "Tracking done-vs-remaining across the catalog",
+        "description": "Maintaining an accurate ledger of which functions/endpoints/subsystems are implemented, verified, or outstanding, and detecting when stuck circling one bug versus advancing.",
+        "why_it_matters": "The surface is so large (hundreds of functions plus many subsystems) that without an explicit inventory the agent will lose the plot \u2014 re-implementing, forgetting whole categories, or sinking unbounded time into one stubborn feature.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "No sense of what's done; repeatedly rediscovers or forgets whole areas.",
+          "3": "Vague mental tracking; loses track of which function families or endpoints remain.",
+          "5": "Keeps a checklist of major subsystems/function groups and updates it as items complete.",
+          "8": "Maintains a granular, current inventory of catalog coverage and endpoint/subsystem status, and notices when it is stuck (e.g. re-debugging the same spill case) and time-boxes or reroutes.",
+          "10": "Runs a continuously accurate progress model tied to verification state (implemented vs actually-passing), surfaces stalls early, and reallocates attention deliberately so no category is silently dropped and no single bug consumes disproportionate horizon."
+        }
+      },
+      {
+        "id": "adaptation_correction",
+        "spine": true,
+        "name": "Course-correction on falsified assumptions",
+        "description": "Revising design, library choice, or semantics when reality diverges \u2014 a formula result mismatches LibreOffice, a library can't round-trip xlsx features, the recompute misses the performance budget, or the reverse-engineered contract was wrong.",
+        "why_it_matters": "Over a build this large, early assumptions about the contract, chosen libraries, and Excel semantics will be partly wrong; an agent that barrels ahead on a falsified assumption compounds errors across dozens of dependent features.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "Ignores contradicting evidence; keeps building on a broken engine or mismatched contract.",
+          "3": "Patches symptoms locally but never revisits the underlying wrong assumption.",
+          "5": "When a test or value fails, diagnoses and fixes the root cause before moving on.",
+          "8": "Recognizes when a structural choice is wrong (library can't meet openpyxl/CF fidelity, recompute design won't hit budget, contract shape misread) and reworks it deliberately rather than accreting workarounds.",
+          "10": "Treats divergence as signal: isolates the falsified assumption, re-validates the corrected model against ground truth, and propagates the fix across affected subsystems \u2014 changing course decisively without destabilizing already-verified work."
+        }
+      },
+      {
+        "id": "scope_triage",
+        "spine": false,
+        "name": "Effort allocation across un-completable breadth",
+        "description": "Deliberately prioritizing high-frequency, high-coverage core (common functions, core recompute, spill, core REST) over exotic long-tail features when full coverage isn't feasible in the horizon.",
+        "why_it_matters": "The catalog and feature list are vast enough that near-complete coverage is unlikely; maximizing graded outcome requires shrewdly sequencing broad, solid core coverage before rare engineering/distribution functions or niche surfaces \u2014 a distinct allocation decision beyond ordering by dependency.",
+        "importance": 7,
+        "target_level": 7,
+        "anchors": {
+          "0": "Sinks time into a few exotic corners (e.g. one financial function or CF edge case) while core functions and endpoints remain broken.",
+          "3": "Works in arbitrary order with no regard to coverage payoff.",
+          "5": "Implicitly favors common, high-value functionality first and defers obvious niche items.",
+          "8": "Explicitly triages the surface by expected coverage/value, builds a broad solid core across families, and consciously time-boxes or defers the long tail.",
+          "10": "Runs an adaptive value-vs-cost allocation across the whole horizon \u2014 broadening coverage where it pays, capping investment in fragile niches, and revisiting the allocation as verification reveals where graded value actually concentrates."
+        }
+      }
+    ]
+  },
+  {
+    "task_read": "A sprawling, long-horizon build: a full Excel-clone product (HTTP server + persistence + SPA + JSON API + WebSocket collab) whose formula engine must implement ~150 functions, dynamic-array spill, LET/LAMBDA, iterative calc, Goal Seek, XLSX round-trip, pivots, locale input, and more \u2014 with correctness graded cell-by-cell against a held-out LibreOffice corpus and hard performance targets. The wire contract is under-specified and must be reverse-engineered from an existing client (`/dev_tests/helpers.py`), and the provided smoke suite is explicitly non-exhaustive. This demands heavy, sustained meta-work: deep orientation, careful sequencing across dozens of interdependent subsystems, self-built verification beyond the smoke tests, tight progress tracking over a huge surface, and ROI-driven triage since the scope likely exceeds what can be perfectly finished.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "spine": true,
+        "name": "Contract & semantics orientation",
+        "description": "Reading the first-party client to recover the exact wire shape, running the smoke suite to observe expected behavior, and grounding Excel-365 semantics before/while coding rather than guessing.",
+        "why_it_matters": "The exact JSON shapes (cell kinds, spill fields, patch/fill/sort bodies, listing envelope) are defined only by `/dev_tests/helpers.py`; guessing the contract guarantees silent wire mismatches, and Excel edge-case semantics (error propagation, spill, criteria wildcards) can't be invented from scratch.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "Starts implementing endpoints/functions from the prose spec alone; never opens helpers.py or runs dev_tests.",
+          "3": "Skims helpers.py once, catches a couple of obvious shapes, but codes most of the contract from assumption; no probing of runtime behavior.",
+          "5": "Reads helpers.py to extract the request/response shapes it will build against, runs run.sh once to see the baseline, and pins down the main cell/patch schemas before building.",
+          "8": "Systematically maps every endpoint and shape the client exercises (cell kinds incl. spill, spill_range, error sentinels, envelopes), cross-references against the prose spec to resolve ambiguities, and returns to the client/tests when new subsystems (collab, xlsx, locale) raise fresh contract questions.",
+          "10": "Sustained, contract-first orientation across the whole horizon: reconstructs an explicit model of the wire contract and Excel semantics from the client, deliberately probes uncertain behaviors (spill ghost writes, LWW ordering, validation-on-formula), and continuously re-grounds each new subsystem in evidence rather than assumption \u2014 leaving essentially no guessed contract detail."
+        }
+      },
+      {
+        "id": "decomposition_milestones",
+        "spine": true,
+        "name": "Subsystem sequencing & milestones",
+        "description": "Breaking the product into an ordered hierarchy of buildable, verifiable milestones (skeleton+health first, then core cells/recompute, then formula catalog, spill, xlsx, collab, analyst surface) each with a done-check.",
+        "why_it_matters": "Dozens of interdependent subsystems mean wrong ordering (e.g. XLSX before a working engine, or collab before persistence) strands work; a foundation-first sequence with concrete milestones is what keeps a build this large from collapsing into an unverifiable mass.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "No visible structure; jumps between unrelated features with no ordering or completion criteria.",
+          "3": "A vague mental list; builds features in roughly arbitrary order, foundational pieces (health, persistence, recompute) not deliberately sequenced first.",
+          "5": "Establishes a sensible spine \u2014 server+health, cell CRUD, recompute, then functions and extras \u2014 with rough milestones, though dependencies between subsystems are only partly reasoned.",
+          "8": "Explicit dependency-aware milestone plan: each milestone has a concrete done-signal (a passing check), foundations precede dependents, and the huge function catalog and analyst features are chunked into verifiable batches rather than one push.",
+          "10": "A crisp, adaptive milestone hierarchy that sequences by both dependency and risk (tackles the load-bearing recompute/spill core early with clear exit criteria), keeps milestones sized to stay individually verifiable, and re-plans the remaining tree as subsystems land \u2014 sustained coherence across the whole horizon."
+        }
+      },
+      {
+        "id": "verification_strategy",
+        "spine": true,
+        "name": "Self-built verification beyond the smoke suite",
+        "description": "Deliberately designing checks the task does not hand over \u2014 formula values against known Excel results, XLSX round-trip via openpyxl, performance timing, spill/collab/error-path behavior \u2014 since grading is on a hidden suite.",
+        "why_it_matters": "The provided dev_tests are explicitly non-exhaustive and the real grade comes from a held-out LibreOffice corpus; an agent that only makes run.sh pass will ship large swaths of untested (and likely wrong) formula and round-trip behavior.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "Never runs any verification, or writes code and declares done without executing it.",
+          "3": "Runs run.sh occasionally; treats a green smoke suite as proof of correctness with no independent checks.",
+          "5": "Runs the smoke suite regularly and spot-checks a few own cases (a formula value, one xlsx round-trip), catching obvious breakage.",
+          "8": "Builds targeted checks for the risky, hidden-graded areas: formula outputs against known-correct Excel values across function families, an openpyxl re-import assertion, an actual timing check against the perf targets, and error/edge paths (spill ghosts, validation, #CIRC vs iterative).",
+          "10": "A deliberate verification harness proportionate to the surface: systematic value checks spanning the catalog and error sentinels, round-trip and locale/format fidelity assertions, performance measured against the stated bounds, and collab/LWW behavior exercised \u2014 with checks added precisely where confidence is lowest, treating the smoke suite as a floor rather than the target."
+        }
+      },
+      {
+        "id": "progress_monitoring",
+        "spine": true,
+        "name": "Coverage tracking across a huge surface",
+        "description": "Maintaining an accurate done-vs-remaining picture across ~150 functions and many subsystems, and detecting stuck/circular states (e.g. re-debugging the same spill or recompute bug).",
+        "why_it_matters": "The breadth is so large that without an explicit ledger the agent will silently drop whole function families or endpoints and lose hours re-debugging the same core; keeping the plot is a first-order challenge here.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "No tracking; loses track of what's built, silently abandons subsystems, or loops on one bug without noticing.",
+          "3": "Keeps a loose mental tally; frequently forgets whole areas and only rediscovers gaps by accident.",
+          "5": "Maintains a running task list of subsystems/functions and checks items off as done, giving a roughly accurate view of remaining work.",
+          "8": "Keeps an explicit, current ledger of the catalog and subsystems with real status, notices when it's thrashing on a bug and names the stuck state, and uses the ledger to steer what to do next.",
+          "10": "Continuous, accurate situational awareness over the full horizon: a maintained map of every function family and subsystem's true state (built/verified/failing), early detection of circular debugging with an explicit change of tactic, and no silently dropped surface \u2014 the remaining-work picture stays trustworthy end to end."
+        }
+      },
+      {
+        "id": "adaptation_correction",
+        "spine": true,
+        "name": "Course-correction on falsified approaches",
+        "description": "Revising design/approach when reality diverges \u2014 a chosen library or recompute/spill design fails correctness or the perf bounds, or a contract assumption proves wrong \u2014 rather than pushing ahead on it.",
+        "why_it_matters": "Key early bets (formula-eval library, dirty-recompute design, XLSX approach) can prove inadequate against the correctness corpus or the sub-2s/10s/30s targets; recognizing and reversing a bad foundational choice, versus patching around it forever, decides whether the build converges.",
+        "importance": 8,
+        "target_level": 7,
+        "anchors": {
+          "0": "Barrels ahead on a falsified assumption or broken design; repeats the same failing fix indefinitely.",
+          "3": "Makes local patches when tests fail but never revisits the underlying approach even when it's clearly the cause.",
+          "5": "Adjusts approach when a check clearly fails \u2014 swaps a tactic or reworks a component after evidence it's wrong.",
+          "8": "Treats divergence as signal: when a foundational bet (library, recompute strategy, contract guess) fails correctness or perf, diagnoses root cause and revises the design rather than layering workarounds, updating the plan accordingly.",
+          "10": "Disciplined, evidence-driven adaptation throughout: surfaces falsifying results early, distinguishes local bugs from wrong foundations, and executes decisive re-designs of load-bearing components (with re-verification) while protecting already-working subsystems \u2014 the approach visibly improves as understanding grows."
+        }
+      },
+      {
+        "id": "scope_triage",
+        "spine": false,
+        "name": "Coverage-ROI triage under scope pressure",
+        "description": "Allocating effort across a surface almost certainly too large to perfect \u2014 prioritizing subsystems/functions by likely graded weight and dependency so breadth-of-correctness is maximized rather than over-polishing one corner.",
+        "why_it_matters": "This spec bundles far more than can be flawlessly completed; a skilled builder consciously trades depth for coverage where it pays (broad correct core over one gold-plated feature), and mis-allocating effort (e.g. perfecting collab while leaving half the formula catalog broken) tanks the hidden-suite score.",
+        "importance": 7,
+        "target_level": 7,
+        "anchors": {
+          "0": "No prioritization; sinks unbounded time into one feature while major graded areas go unbuilt, or spreads so thin nothing works end to end.",
+          "3": "Implicit ordering only; some effort clearly misallocated relative to likely graded value with no reasoning about it.",
+          "5": "Shows rough prioritization \u2014 builds the high-value core broadly before niche features, and doesn't obviously over-invest in low-weight corners.",
+          "8": "Explicit ROI reasoning: deliberately front-loads the widest-graded, load-bearing surface (recompute, common functions, contract fidelity), defers or time-boxes low-weight/high-cost features, and keeps a working whole rather than a polished fragment.",
+          "10": "Continuously optimizes coverage against likely grading and cost: makes and revisits conscious triage calls as time/information change, secures a broadly-correct working product first, and invests depth only where marginal graded return is highest \u2014 no major surface starved by over-polishing another."
+        }
+      }
+    ]
+  },
+  {
+    "task_read": "An extremely large, long-horizon build: a full Excel-style spreadsheet server + SPA + WebSocket collab, with a 100+ function formula engine, dynamic-array spill, dirty-only recompute under performance budgets, XLSX/CSV round-trip, pivots, locale input, validation, iterative calc, and Goal Seek. The wire contract is deliberately under-specified and must be reverse-engineered from an existing first-party client (`/dev_tests/helpers.py`); grading is a large hidden suite against LibreOffice ground truth. This demands maximal, sustained meta-work: deep contract discovery, aggressive decomposition/sequencing, self-built verification against reference semantics, coverage triage across a huge feature surface, and continuous course-correction.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "spine": true,
+        "name": "Contract discovery & semantic grounding",
+        "description": "Reading helpers.py/run.sh to recover the exact wire shapes, and grounding formula/XLSX behavior in real Excel/LibreOffice semantics before implementing.",
+        "why_it_matters": "The entire API contract (workbook ids, cell kinds, patch/fill/sort bodies, spill fields, listing envelope) is defined only by the existing client, and grading compares values cell-by-cell against a held-out LibreOffice corpus. Guessing shapes or Excel edge-case semantics blind guarantees mass failures in the hidden suite.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "Starts coding the server/engine without reading helpers.py; invents its own JSON shapes and function semantics.",
+          "3": "Skims helpers.py once, extracts a couple of endpoints, but leaves most shapes and error names inferred from the prose spec rather than the client.",
+          "5": "Reads helpers.py and run.sh, extracts the concrete request/response shapes and error names it will implement first, and notes the obvious spill/kind fields.",
+          "8": "Systematically maps every call in the client to a shape (cell kinds incl. spill ghosts, patch/fill/sort/filter/pivot bodies, listing envelope, error discriminators), and deliberately consults reference Excel behavior for ambiguous areas (criteria wildcards, lookup edge cases, spill materialization, iterative fixed-point).",
+          "10": "Builds and maintains an explicit, evidence-backed contract model from the client as the single source of truth, re-probing it whenever an assumption is challenged, and pins down subtle reference semantics (error propagation order, LWW-by-seq, locale canonicalization, XLSX openpyxl expectations) before they cause silent value mismatches."
+        }
+      },
+      {
+        "id": "decomposition_milestones",
+        "spine": true,
+        "name": "Scope decomposition & sequencing",
+        "description": "Breaking a vast feature surface into an ordered hierarchy of milestones, each with a done-check, respecting dependencies (skeleton+persistence \u2192 contract \u2192 engine \u2192 advanced surfaces).",
+        "why_it_matters": "The spec spans dozens of loosely-coupled subsystems with hard dependencies (recompute engine underpins spill, CF, pivots, goal seek; the wire contract underpins everything). Without deliberate sequencing, an agent burns the horizon on deep features while the health endpoint, persistence, or core patch path is still broken.",
+        "importance": 9,
+        "target_level": 9,
+        "anchors": {
+          "0": "Dives into a random feature (e.g. NORM.DIST or XLSX) with no ordering; no notion of milestones.",
+          "3": "A flat, generic to-do list that doesn't reflect real dependencies or done-conditions.",
+          "5": "A sensible ordered plan that gets the server booting, health/persistence, and the core cell-patch/recompute path working before advanced features, with rough milestones.",
+          "8": "Explicit dependency-aware milestone structure (foundation \u2192 engine \u2192 dynamic arrays/spill \u2192 I/O \u2192 analyst surfaces \u2192 collab \u2192 goal seek), each milestone with a concrete completion check, and consciously deferred/parallelizable branches identified.",
+          "10": "A crisp, revised-as-it-learns milestone hierarchy that sequences by both dependency and grading ROI, keeps each milestone independently verifiable, and visibly protects the critical path (a working, persistent, contract-correct core) before expanding breadth."
+        }
+      },
+      {
+        "id": "verification_strategy",
+        "spine": true,
+        "name": "Self-built verification against reference",
+        "description": "Deliberately designing checks beyond the given smoke suite \u2014 running the live server, exercising the client, and comparing computed values to known-correct Excel/LibreOffice results.",
+        "why_it_matters": "The provided dev_tests are explicitly non-exhaustive; grading is a much larger hidden suite comparing values cell-by-cell. Assuming the smoke suite passing means correctness will leave most functions, error sentinels, spill cases, and XLSX round-trips silently wrong.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "Never runs the server or any test; assumes code is correct because it was written.",
+          "3": "Runs run.sh once at the end; treats a green smoke suite as done.",
+          "5": "Runs the live server and dev_tests iteratively, and spot-checks a few formula results and endpoints by hand.",
+          "8": "Builds its own targeted checks for high-risk areas the smoke suite won't cover \u2014 error-sentinel propagation, spill/#SPILL!, iterative convergence, XLSX re-import fidelity, performance budgets \u2014 and validates outputs against independently-derived expected values.",
+          "10": "Establishes a reusable verification harness that systematically probes function families and edge cases against reference-correct values (matching LibreOffice/Excel semantics), including performance timing and round-trip invariants, and treats a mismatch as a signal to investigate rather than a number to tweak."
+        }
+      },
+      {
+        "id": "progress_monitoring",
+        "spine": true,
+        "name": "Coverage tracking across the horizon",
+        "description": "Maintaining an accurate live picture of which subsystems/functions are done, in-progress, or unstarted, and detecting stuck or circular states over a very long build.",
+        "why_it_matters": "With 100+ functions and a dozen subsystems, it is easy to lose track, re-implement, or believe a feature works when it regressed. Sustained, accurate done-vs-remaining accounting is what prevents thrashing and abandoned partial features across the long horizon.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "No tracking; loses the plot on what's implemented vs pending; repeats or forgets work.",
+          "3": "Vague mental sense of progress; occasionally re-touches finished areas or forgets whole subsystems.",
+          "5": "Keeps a running checklist of features/functions and updates it as it goes, catching most gaps.",
+          "8": "Maintains an accurate, frequently-updated status of every major subsystem and function family, and explicitly notices when it's stuck on one area (e.g. repeated failing XLSX assertions) rather than looping.",
+          "10": "Sustains a precise, continuously-reconciled coverage map tied to verification results, distinguishing 'coded' from 'verified', catching regressions in already-done areas, and reallocating attention the moment progress stalls."
+        }
+      },
+      {
+        "id": "adaptation_correction",
+        "spine": true,
+        "name": "Course-correction on falsified assumptions",
+        "description": "Revising contract assumptions, engine design, or approach when the client, tests, or reference behavior contradict expectations \u2014 rather than pressing on.",
+        "why_it_matters": "Early guesses about wire shapes, recompute strategy, or library choice will be wrong somewhere; performance budgets or XLSX/openpyxl expectations may falsify a design. Detecting the contradiction and re-designing (not patching around it) is decisive over this horizon.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "Ignores contradicting evidence (failing tests, wrong values) and keeps building on the falsified assumption.",
+          "3": "Reacts to failures with superficial patches that don't address the wrong underlying assumption.",
+          "5": "When a test or the client reveals a wrong shape/semantic, fixes it and propagates the correction to related code.",
+          "8": "Treats contradictions as signals to re-examine the underlying model (e.g. recompute algorithm can't meet the 5,000-dependent budget, or spill semantics differ from assumed), and revises design accordingly.",
+          "10": "Proactively surfaces and tests risky assumptions early, and when reality diverges performs a clean, root-cause re-design (architecture, algorithm, or library) rather than accumulating workarounds \u2014 keeping the system coherent as understanding deepens."
+        }
+      },
+      {
+        "id": "coverage_triage",
+        "spine": false,
+        "name": "Breadth-vs-depth ROI triage",
+        "description": "Allocating finite effort across a feature surface far too large to perfect, prioritizing by expected graded coverage rather than personal interest or spec order.",
+        "why_it_matters": "The spec is almost certainly larger than can be fully completed; the hidden suite rewards broad correct coverage. Consciously trading depth on exotic corners (e.g. every distribution function) against breadth of core correctness (patch, recompute, common functions, round-trips) materially changes the score.",
+        "importance": 7,
+        "target_level": 7,
+        "anchors": {
+          "0": "Sinks disproportionate time into one narrow feature (e.g. polishing the SPA or one financial function) while core surfaces remain unimplemented.",
+          "3": "Follows spec order mechanically with no sense of what's high- vs low-value for grading.",
+          "5": "Roughly prioritizes core, high-frequency functionality before niche functions, getting broad basics working.",
+          "8": "Makes explicit ROI decisions \u2014 securing common functions, core recompute, and round-trips broadly, and deliberately time-boxing or deferring low-yield exotica \u2014 to maximize graded coverage.",
+          "10": "Continuously re-triages based on verification feedback and remaining budget, consciously banking broad correctness first and only deepening exotic areas once the high-value surface is verified, articulating the trade-offs as it goes."
+        }
+      }
+    ]
+  },
+  {
+    "task_read": "An extremely long-horizon, breadth-first build: a full Excel-clone product (HTTP server + persistence + SPA + JSON API + WebSocket collab) with a 100+ function formula engine, dynamic-array spilling, dirty-only topological recompute under hard performance budgets, xlsx/CSV round-trips graded cell-by-cell against a LibreOffice corpus, and an analyst surface (names, formats, conditional formats, pivots, locale, validation, goal seek, iterative calc). The wire contract is deliberately under-specified \u2014 it must be reverse-engineered from a first-party client (/dev_tests/helpers.py) \u2014 and grading is on a large HIDDEN suite, with only a non-exhaustive smoke suite provided. This demands maximal, sustained meta-work: deep orientation on the contract, disciplined decomposition/sequencing across ~15 independent subsystems, self-built verification beyond the smoke tests, tight progress tracking, and repeated course-correction as Excel semantics and performance assumptions are falsified.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "spine": true,
+        "name": "Contract reverse-engineering & environment probing",
+        "description": "Extracting the true wire contract from /dev_tests/helpers.py and run.sh, probing available libraries and runtime, and grounding Excel-365 semantics before/while building.",
+        "why_it_matters": "The exact JSON shapes, cell kinds, spill fields, and listing envelope are defined ONLY by what the existing client calls \u2014 building without reading it means guessing a contract the hidden suite enforces exactly. Library availability (OOXML, formula math) and Excel semantics also must be pinned down or the whole engine is built on sand.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "Starts coding the server/engine without opening helpers.py or the dev_tests; invents wire shapes and function behaviors from memory.",
+          "3": "Skims helpers.py once, grabs a couple of endpoint shapes, but leaves most of the contract (spill fields, cell kinds, envelopes, error names) unresolved and guesses as it goes.",
+          "5": "Reads helpers.py and run.sh, extracts the core request/response shapes and cell discriminator, and checks which relevant libraries are installed before committing to an approach.",
+          "8": "Systematically mines helpers.py for every wire detail it exercises (ids, patch/fill/sort/filter bodies, spill/spill_range, envelopes, error names), confirms available OOXML/eval libraries, and anchors ambiguous Excel semantics (error propagation, spill, locale) against concrete references rather than assumptions.",
+          "10": "Treats the client as a living spec: continuously re-consults it whenever a new subsystem's contract is ambiguous, cross-checks inferred behavior against edge cases the client implies, reconciles against the LibreOffice ground-truth notion of correctness, and records the derived contract so later work stays faithful \u2014 orientation sustained across the whole build, not just up front."
+        }
+      },
+      {
+        "id": "decomposition_milestones",
+        "spine": true,
+        "name": "Subsystem sequencing & milestone structure",
+        "description": "Breaking the sprawling product into an ordered hierarchy of subsystems (bootstrap/health, cell model, recompute engine, function catalog, features, collab, SPA) each with an explicit done-check.",
+        "why_it_matters": "With ~15 largely independent subsystems and a foreground server that must serve /api/health early, foundation-first sequencing and verifiable milestones are what keep the build from collapsing into a half-working monolith; wrong ordering (e.g. features before a working recompute core) wastes the horizon.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "No visible structure; jumps between unrelated pieces (a distribution function, then a WebSocket, then styling) with no ordering or completion criteria.",
+          "3": "A vague mental list of 'engine, API, UI' with no dependency ordering and no way to tell when any piece is done.",
+          "5": "An explicit ordered plan covering the major subsystems in a sensible dependency order (server+health, cell/recompute core, then formula catalog, then features), with rough done-criteria.",
+          "8": "Layered milestones where each rests on a verified predecessor (bootstrap+persistence proven before engine; engine proven on a chain before adding the catalog; core REST proven before collab/SPA), each tied to a concrete check such as a passing smoke test or endpoint response.",
+          "10": "A dependency-aware milestone tree that isolates risk (spill/topo-recompute and the xlsx round-trip identified early as hardest and de-risked first), keeps every milestone independently verifiable, and is revisited and re-ordered as the build reveals coupling \u2014 decomposition that demonstrably steers execution rather than a one-time list."
+        }
+      },
+      {
+        "id": "verification_strategy",
+        "spine": true,
+        "name": "Self-built verification against a hidden suite",
+        "description": "Deliberately designing checks \u2014 beyond the supplied non-exhaustive smoke suite \u2014 for Excel-value correctness, persistence-across-restart, performance budgets, and xlsx/openpyxl round-trips.",
+        "why_it_matters": "Grading is on a much larger hidden suite; passing run.sh proves almost nothing. Only an agent that builds its own targeted verification (correct sentinels, spill materialization, cell-by-cell values, restart survival, sub-second propagation, openpyxl-readable export) can trust its work is actually correct.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "Never runs the tests or the server against real inputs; assumes code works because it was written.",
+          "3": "Runs the server manually once or eyeballs a response; maybe runs run.sh but treats a pass as done and adds no checks of its own.",
+          "5": "Runs /dev_tests/run.sh and fixes what it flags, and spot-checks a few endpoints and formula results by hand.",
+          "8": "Augments the smoke suite with its own targeted checks for areas it knows are under-covered \u2014 verifies error sentinels and propagation, spill ghosts, persistence after a real process restart, performance on a large workbook, and an openpyxl re-read of the export \u2014 and re-runs them after each subsystem.",
+          "10": "Stands up a systematic verification harness that anticipates hidden-suite coverage: cross-checks formula outputs against an independent ground truth, exercises edge cases (locale separators, iterative-calc convergence, goal-seek non-convergence, spill-target-write rejection), enforces the stated perf budgets as explicit gates, and runs it as a regression net so new work can't silently break proven subsystems."
+        }
+      },
+      {
+        "id": "progress_monitoring",
+        "spine": true,
+        "name": "Cross-subsystem progress tracking",
+        "description": "Maintaining an accurate done-vs-remaining picture across the many subsystems and the long horizon, and detecting stuck/thrashing/circular debugging.",
+        "why_it_matters": "The surface is large enough to lose the plot: without a maintained ledger the agent forgets whole subsystems (collab, validation, pivots), re-debugs the same formula in circles, or declares victory with major pieces unbuilt.",
+        "importance": 7,
+        "target_level": 7,
+        "anchors": {
+          "0": "No awareness of what remains; wanders and repeats work, or stops far short believing it's finished.",
+          "3": "Occasional informal 'what's next' comments but loses track of whole subsystems and re-treads solved ground.",
+          "5": "Keeps a running task list of subsystems and updates it as pieces land, giving a broadly accurate sense of remaining work.",
+          "8": "Maintains an accurate, continuously updated ledger of every subsystem's status against the spec, and notices when it's stuck on one area \u2014 stepping back to reassess rather than looping on the same failing fix.",
+          "10": "Sustains a precise picture across the entire horizon, explicitly reconciles remaining scope against the spec's full surface, catches circular/thrashing debugging early and names it, and reallocates attention deliberately so no subsystem is silently dropped or over-polished at the expense of untouched ones."
+        }
+      },
+      {
+        "id": "adaptation_correction",
+        "spine": true,
+        "name": "Course-correction on falsified assumptions",
+        "description": "Revising design, contract interpretation, or approach when tests, Excel semantics, or performance results contradict expectations \u2014 rather than pushing ahead on a broken premise.",
+        "why_it_matters": "Reverse-engineered contracts and Excel edge semantics will be gotten wrong; performance targets or the xlsx/openpyxl constraint may not be met on first try. The horizon is only survivable if the agent treats each contradiction as a signal to trace root cause and revise, not patch symptoms.",
+        "importance": 7,
+        "target_level": 7,
+        "anchors": {
+          "0": "Ignores failing tests or wrong values and keeps building; never revisits an assumption once made.",
+          "3": "Reacts to failures with superficial tweaks (retrying, hard-coding a case) without diagnosing why the assumption was wrong.",
+          "5": "When a check fails, investigates and fixes the specific issue, adjusting the local implementation to match observed behavior.",
+          "8": "Traces failures to their root \u2014 a wrong wire-shape inference, a mis-modeled recompute order, an unmet perf budget \u2014 and revises the underlying design or contract interpretation accordingly, rather than layering patches.",
+          "10": "Detects a falsified assumption early from a divergence, isolates it, and re-architects the affected layer decisively (e.g. reworking the dependency/spill model or the eval strategy) while re-verifying that dependent subsystems still hold \u2014 turning contradictions into structural improvements instead of accumulating debt."
+        }
+      },
+      {
+        "id": "coverage_triage",
+        "spine": false,
+        "name": "Effort allocation across a vast feature surface",
+        "description": "Judging where to invest finite effort across 100+ functions and ~15 subsystems to maximize correctness on the hidden suite, rather than exhaustively perfecting one corner or spreading uniformly thin.",
+        "why_it_matters": "The catalog and feature list are far larger than can be perfected; a skilled agent bets on breadth of working core behavior and the highest-leverage/hardest-to-fake areas (recompute correctness, common functions, round-trips) instead of gold-plating rare distributions while collab or persistence stay broken.",
+        "importance": 7,
+        "target_level": 7,
+        "anchors": {
+          "0": "No prioritization: sinks disproportionate time into a narrow slice (e.g. exotic engineering/distribution functions) while core subsystems are missing.",
+          "3": "Builds in arbitrary order with no sense of relative value; breadth and depth are accidental.",
+          "5": "Implicitly prioritizes common, high-value functionality (core math/lookup/text, basic recompute, persistence) before rare or specialized features.",
+          "8": "Makes deliberate, defensible bets \u2014 securing broad working coverage of the core catalog and each major subsystem before investing in edge functions \u2014 and consciously trades depth for breadth where the hidden suite likely rewards it.",
+          "10": "Explicitly reasons about expected coverage/value across the whole surface, sequences effort to lock in the widest band of correct behavior first, and revisits the allocation as time is spent \u2014 leaving no high-value subsystem unbuilt for the sake of a low-value one, while still finishing the hard, distinguishing pieces."
+        }
+      }
+    ]
+  },
+  {
+    "task_read": "A very large, long-horizon greenfield build: an Excel-class spreadsheet server + SPA with a 100+ function formula engine, dependency-graph recompute, dynamic-array spill, iterative calc, goal seek, WebSocket collaboration, xlsx/CSV round-trips, pivots, conditional formatting, validation, locale input, and persistence \u2014 graded by a large HIDDEN suite while the wire contract is only pinned by an existing first-party client (helpers.py). Difficulty comes from enormous breadth, tight interdependencies, an under-specified contract that must be reverse-engineered, and performance/correctness bars checked cell-by-cell against a held-out ground truth. This warrants heavy, sustained, and continuously self-correcting meta-work across all five faculties.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "spine": true,
+        "name": "Contract & environment reverse-engineering",
+        "description": "Reading helpers.py / run.sh and probing the runtime to nail the exact wire shapes, error names, and semantics before and while building.",
+        "why_it_matters": "The spec explicitly defers the wire shape to what the first-party client already calls; guessing JSON shapes, cell `kind` discriminators, spill fields, or error names means silent divergence from the hidden grader no matter how correct the engine is.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "Starts coding the server from the prose spec alone; never opens helpers.py or the dev_tests harness.",
+          "3": "Skims helpers.py once, grabs a few endpoint names, but leaves key shapes (spill anchors, envelope, error bodies) to guesswork.",
+          "5": "Reads helpers.py and run.sh, extracts the concrete request/response shapes and error names it exercises, and builds to those before running.",
+          "8": "Systematically maps every call in the harness to a required endpoint/shape, runs the smoke suite early as a probe, and infers under-specified semantics (spill materialization, LWW, iterative fixed-point) by cross-referencing spec clauses with client expectations.",
+          "10": "Sustains a living model of the contract: distinguishes what the smoke suite pins from what the hidden suite likely probes, actively de-risks ambiguous corners (locale canonicalization, ghost-write rejection, openpyxl readability) via targeted experiments, and revisits helpers.py whenever behavior surprises it."
+        }
+      },
+      {
+        "id": "decomposition_milestones",
+        "spine": true,
+        "name": "Slicing the surface into verifiable milestones",
+        "description": "Breaking a huge, interdependent feature set into an ordered hierarchy of sub-systems, each with a concrete done-check, rather than one undifferentiated push.",
+        "why_it_matters": "With dozens of loosely coupled subsystems (persistence, engine core, spill, xlsx, collab, SPA), an unstructured attack strands half-finished features and blocks the foundational pieces (recompute graph) that everything else depends on.",
+        "importance": 9,
+        "target_level": 9,
+        "anchors": {
+          "0": "No structure; jumps between unrelated features with no ordering or completion criteria.",
+          "3": "A flat to-do list of feature names with no dependency ordering and no per-item definition of done.",
+          "5": "Identifies major subsystems and sequences them sensibly (health/persistence \u2192 cell CRUD \u2192 dependency recompute \u2192 functions \u2192 advanced surfaces), each with a rough acceptance check.",
+          "8": "A dependency-aware milestone plan where foundational layers (dirty-only topological recompute, wire contract) are stabilized before dependents, each milestone with an explicit pass condition tied to the harness or a self-written check.",
+          "10": "A layered plan that also reasons about cross-cutting risk (spill \u2194 recompute \u2194 xlsx \u2194 collab must share one cell model), sizes milestones to keep a working server at every step, and re-plans milestone boundaries as coupling is discovered."
+        }
+      },
+      {
+        "id": "verification_strategy",
+        "spine": true,
+        "name": "Building checks beyond the smoke suite",
+        "description": "Deliberately designing verification \u2014 self-authored tests, oracle comparisons, endpoint probes \u2014 knowing the visible suite is non-exhaustive and grading is hidden and cell-by-cell.",
+        "why_it_matters": "The spec warns the dev_tests are a non-exhaustive smoke suite and grading uses a held-out LibreOffice corpus; passing run.sh proves almost nothing, so the agent must manufacture its own correctness signal for functions, spill, errors, and xlsx round-trips.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "Never runs anything, or assumes code is correct because it was written.",
+          "3": "Runs the provided smoke suite once and treats a green result as done.",
+          "5": "Runs the smoke suite plus ad hoc manual checks of a few endpoints and formulas it just wrote.",
+          "8": "Builds targeted checks for high-risk areas the smoke suite can't cover \u2014 error-sentinel propagation, spill/#SPILL!, iterative convergence, openpyxl re-import, performance bars \u2014 and validates function outputs against known-correct values.",
+          "10": "Stands up a reusable verification loop (oracle-style comparisons for formula values, round-trip export\u2192import assertions, load/latency probes for the perf clauses) and uses it continuously to catch regressions across subsystems, not just at the end."
+        }
+      },
+      {
+        "id": "progress_monitoring",
+        "spine": true,
+        "name": "Tracking coverage across a huge horizon",
+        "description": "Maintaining an accurate done-vs-remaining picture across scores of features and detecting stalls/circular debugging.",
+        "why_it_matters": "The catalog is enormous and easy to lose track of; without a running ledger the agent silently drops whole function families or endpoints and burns the horizon re-debugging one corner.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "No sense of what's done vs left; features silently forgotten, no awareness when stuck.",
+          "3": "Vague recollection of progress; rediscovers unfinished work by accident.",
+          "5": "Keeps a checklist of subsystems/functions and updates it as pieces land.",
+          "8": "Maintains an accurate live ledger of implemented-vs-remaining across the catalog and endpoints, and notices when it's looping on one bug rather than progressing.",
+          "10": "Continuously reconciles remaining work against remaining effort, explicitly triages when time-boxed, and recognizes thrash early enough to switch tactics or defer a subsystem rather than sinking the horizon into one stubborn corner."
+        }
+      },
+      {
+        "id": "adaptation_correction",
+        "spine": true,
+        "name": "Course-correcting on falsified assumptions",
+        "description": "Revising design, library choice, or approach when probes/tests reveal reality differs from expectation, rather than pushing ahead on a broken premise.",
+        "why_it_matters": "Big bets here (formula-eval library, spill data model, xlsx library, recompute algorithm) can be falsified mid-build; a rigid agent that discovers its cell model can't represent spill ghosts or its lib can't emit openpyxl-readable styles must restructure, not paper over.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "Ignores contradicting evidence; keeps building on a disproven assumption until it collapses.",
+          "3": "Reacts to failures with local patches that don't address the wrong underlying model.",
+          "5": "When a check fails, diagnoses and fixes the real cause, and will change a local approach when clearly wrong.",
+          "8": "Treats surprising results as signal: revisits the contract or design, and makes deliberate structural changes (e.g. reworking the cell model or swapping a library) when a foundational assumption is falsified.",
+          "10": "Anticipates fragile bets, validates them early with cheap probes, and when one breaks re-plans downstream milestones coherently \u2014 updating the mental model, the plan, and the verification checks together rather than barrelling ahead."
+        }
+      },
+      {
+        "id": "coverage_triage",
+        "spine": false,
+        "name": "Breadth allocation against a hidden grader",
+        "description": "Strategically allocating effort across a vast feature catalog to maximize expected graded coverage under uncertainty about which corners the hidden suite weights.",
+        "why_it_matters": "Being graded on a much larger hidden suite than is visible makes it a resource-allocation problem: over-polishing one exotic function family while leaving common lookups, error propagation, or persistence half-built wastes the horizon on low-expected-value work.",
+        "importance": 7,
+        "target_level": 7,
+        "anchors": {
+          "0": "Effort distribution is arbitrary; sinks disproportionate time into a narrow corner while core surfaces stay unbuilt.",
+          "3": "Implements whatever is top-of-mind with no reasoning about coverage value or grading likelihood.",
+          "5": "Prioritizes obviously high-value, broadly-tested areas (core engine, common functions, persistence, wire contract) before exotic ones.",
+          "8": "Explicitly reasons about expected graded value \u2014 covering the breadth of function families and endpoints at working quality before deep-polishing any single one, and consciously defers low-probability corners.",
+          "10": "Runs a deliberate breadth-first-then-deepen strategy calibrated to the hidden-suite risk: ensures every major surface returns plausibly-correct results, then reinvests remaining budget where correctness risk and likely test weight are highest, adjusting as evidence accrues."
+        }
+      }
+    ]
+  },
+  {
+    "task_read": "A very large, long-horizon build: a full Excel-clone server (HTTP+JSON API, SPA, WebSocket collab) with a formula engine spanning ~150 functions, dynamic-array spill semantics, error sentinels, iterative calc, goal seek, xlsx/CSV round-trip, pivots, conditional formatting, locale input, data validation, plus hard performance budgets and restart persistence. The exact wire contract is undocumented and must be reverse-engineered from an existing first-party client (`/dev_tests/helpers.py`), and grading is against a large hidden suite plus a LibreOffice ground-truth corpus. Difficulty comes from breadth (many loosely-coupled subsystems), an inferred contract, and correctness against external oracles \u2014 so a skilled practitioner would invest heavily in orientation, milestone decomposition, and self-built verification, and sustain progress-tracking and course-correction across dozens of hours.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "spine": true,
+        "name": "Contract reverse-engineering & Excel-semantics grounding",
+        "description": "Reading helpers.py/run.sh to pin the exact wire shapes before coding, and grounding function behavior in real Excel semantics rather than guessing.",
+        "why_it_matters": "The entire API surface (workbook ids, cell kinds, spill fields, patch/fill/sort bodies, listing envelope) is defined only by the existing client; building against a guessed contract guarantees a re-write, and function correctness is graded against LibreOffice ground truth, so semantics can't be improvised.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "Starts implementing endpoints/formulas from the prose spec alone; never opens helpers.py.",
+          "3": "Skims helpers.py once; extracts a few obvious shapes but leaves cell kind/spill/envelope details to guesswork.",
+          "5": "Reads helpers.py and run.sh, extracts the concrete request/response shapes for the main endpoints, and confirms the health/listing contract before building.",
+          "8": "Systematically maps every shape the client touches (spill anchor fields, discriminators, error names, patch response), cross-checks ambiguous formula semantics (e.g. spill, criteria wildcards, LWW) against known Excel behavior, and records the inferred contract as a reference.",
+          "10": "Builds a precise, verified model of the whole contract from the client, proactively probes edge cases (locale separators, ghost-write rejection, iterative fixed points) against authoritative behavior, and returns to re-read sources whenever a hidden-suite mismatch reveals a gap \u2014 orientation is continuous, not one-shot."
+        }
+      },
+      {
+        "id": "decomposition_milestones",
+        "spine": true,
+        "name": "Subsystem sequencing & done-criteria",
+        "description": "Breaking the sprawling surface into ordered, independently-verifiable milestones (core cell store \u2192 engine \u2192 spill \u2192 REST \u2192 SPA \u2192 collab \u2192 xlsx \u2192 analyst features) each with an explicit completion check.",
+        "why_it_matters": "The task has many subsystems with dependency ordering (engine before spill before pivots/xlsx); without milestone structure the agent scatters effort and can't tell what is actually finished across a huge scope.",
+        "importance": 9,
+        "target_level": 9,
+        "anchors": {
+          "0": "No decomposition; codes features in arbitrary order as they come to mind.",
+          "3": "A flat unordered to-do of feature names with no dependency ordering or done-criteria.",
+          "5": "A sensible ordered plan grouping the work into major subsystems with a rough sequence that respects key dependencies.",
+          "8": "Milestones ordered by dependency, each with an explicit 'done when' check (e.g. dev_tests slice passing, a value verified), and a deliberate spine-first strategy (get a thin end-to-end path working before breadth).",
+          "10": "A layered milestone hierarchy that sequences ~150 functions and features by risk and dependency, defines a verifiable acceptance check per milestone, and is revised as reality shifts \u2014 enabling steady, measurable advance across the full horizon without losing coverage."
+        }
+      },
+      {
+        "id": "verification_strategy",
+        "spine": true,
+        "name": "Self-built correctness checks beyond the smoke suite",
+        "description": "Deliberately designing checks \u2014 running the live server against dev_tests, and building own oracles for formula values, spill, performance budgets, and xlsx round-trip \u2014 knowing the smoke suite is non-exhaustive.",
+        "why_it_matters": "Grading is a large hidden suite plus a LibreOffice corpus; the provided dev_tests are explicitly non-exhaustive, so an agent that only makes dev_tests pass will fail broadly. Correctness must be self-verified against Excel semantics and the stated perf limits.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "No verification; assumes code works, never runs the server or tests.",
+          "3": "Runs dev_tests/run.sh occasionally and treats a green smoke suite as done.",
+          "5": "Runs the server and dev_tests regularly, and spot-checks a few formula results and endpoints manually.",
+          "8": "Builds targeted checks the smoke suite lacks \u2014 value comparisons for tricky functions, spill/ghost-write cases, restart-persistence, and at least a rough perf measurement against the stated budgets \u2014 treating dev_tests as necessary-not-sufficient.",
+          "10": "Establishes a systematic verification harness: cross-checks formula outputs against an independent oracle (e.g. a reference implementation or hand-computed Excel values), exercises collab/xlsx round-trips end-to-end, measures each performance budget explicitly, and uses failures to expand coverage \u2014 verification scales with the surface area."
+        }
+      },
+      {
+        "id": "progress_monitoring",
+        "spine": true,
+        "name": "Coverage tracking across a huge surface",
+        "description": "Maintaining an accurate live picture of which of the many functions/features/endpoints are done, partial, or untouched, and detecting stalls or repeated failures.",
+        "why_it_matters": "With ~150 functions and a dozen subsystems over a long horizon, it is easy to lose the plot, double-cover, or leave whole families unimplemented; accurate done-vs-remaining tracking is what sustains progress.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "No tracking; loses track of what is built vs pending and re-touches or forgets areas.",
+          "3": "Vague mental sense of progress; periodically rediscovers unhandled features.",
+          "5": "Keeps a running checklist of subsystems/functions and updates it as items complete.",
+          "8": "Maintains an accurate, frequently-updated status of every function family and feature (done/partial/failing), and notices when it is stuck re-debugging the same area.",
+          "10": "Sustains a precise coverage ledger across the whole horizon, distinguishes verified-passing from merely-written, catches circular/thrashing debugging early, and uses the ledger to re-prioritize remaining work under time pressure."
+        }
+      },
+      {
+        "id": "adaptation_correction",
+        "spine": true,
+        "name": "Course-correction on contract/semantic mismatches",
+        "description": "Revising design or approach when tests, oracle comparisons, or perf measurements reveal a wrong assumption \u2014 rather than pushing ahead on a falsified contract or algorithm.",
+        "why_it_matters": "Because the contract is inferred and correctness is judged externally, mismatches are expected; the ability to localize the wrong assumption and fix the design (e.g. recompute ordering, spill model, wire shape) determines whether the agent converges or accumulates broken subsystems.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "Ignores failing checks or repeats the same fix; barrels ahead on falsified assumptions.",
+          "3": "Reacts to failures with local patches but doesn't revisit the underlying wrong model.",
+          "5": "When a test or comparison fails, diagnoses and fixes the specific issue, adjusting nearby design as needed.",
+          "8": "Traces failures to root causes, revises the affected design (contract shape, dependency/topo algorithm, spill/perf approach) deliberately, and re-verifies the fix without regressing other areas.",
+          "10": "Treats divergences as signal: re-examines the inferred contract or algorithmic model when evidence contradicts it, makes principled structural changes early rather than accreting hacks, and confirms the correction propagates cleanly across dependent subsystems."
+        }
+      },
+      {
+        "id": "runtime_integration_discipline",
+        "spine": false,
+        "name": "Keeping the live server runnable end-to-end",
+        "description": "Ensuring start.sh actually boots, health returns ok, and the app stays integrated and runnable throughout, rather than accumulating code that has never been executed together.",
+        "why_it_matters": "Grading is entirely against a live server (`bash /app/start.sh`, `/api/health`, REST/WS/SPA); a huge codebase that was never actually booted end-to-end scores zero regardless of internal quality, so continuous integration/boot discipline is a distinct process demand here.",
+        "importance": 7,
+        "target_level": 8,
+        "anchors": {
+          "0": "Never runs start.sh end-to-end; discovers boot/wiring failures (if ever) only at the end.",
+          "3": "Boots the server rarely; large amounts of code integrated in one late big-bang.",
+          "5": "Gets a runnable server early and re-launches it periodically to confirm health and basic endpoints still work.",
+          "8": "Maintains a continuously bootable server, verifies health and key surfaces (REST, WS, SPA, persistence-after-restart) as subsystems land, and catches integration breakage promptly.",
+          "10": "Treats end-to-end runnability as an invariant: a thin vertical slice boots very early, every milestone is validated against the live process including restart persistence, and integration regressions are caught the moment they appear."
+        }
+      }
+    ]
+  },
+  {
+    "task_read": "A very long-horizon, multi-component build: an Excel-clone server (HTTP+WS+SPA+persistence) with a large formula engine (LET/LAMBDA/dynamic-array spill, dozens of functions across 10 families, Excel error semantics), dirty-only recompute under explicit performance budgets, XLSX/CSV round-trip against a LibreOffice ground-truth corpus, collaboration protocol, and an analyst surface (names, formats, conditional formatting, pivots, locale, validation, iterative calc, goal seek). The exact wire contract is under-specified in prose and must be reverse-engineered from a first-party client, and grading is on a hidden suite far larger than the provided smoke tests. This demands heavy, sustained, well-sequenced meta-work: deep upfront orientation, aggressive decomposition across many subsystems, self-built verification against Excel semantics, and continuous progress tracking and course-correction across a vast surface.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "spine": true,
+        "name": "Contract reverse-engineering & environment probing",
+        "description": "Reading /dev_tests/helpers.py and run.sh to recover the exact wire shapes, and probing available libraries/Excel semantics before committing to a design.",
+        "why_it_matters": "The prose explicitly defers the wire contract (ids, cell shapes, patch/fill/sort bodies, kind discriminator, spill fields, envelopes) to the existing client. Guessing the contract or the semantics of dozens of functions instead of reading the source guarantees silent mismatch against the hidden suite.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "Starts coding the server/engine without ever opening helpers.py or run.sh; invents wire shapes from the prose.",
+          "3": "Skims helpers.py once, extracts a few endpoint names, but leaves cell shape, spill fields, and error-name mapping to guesswork.",
+          "5": "Reads helpers.py and run.sh to pin the core request/response shapes and error names before building; spot-checks a couple of ambiguous functions' Excel semantics.",
+          "8": "Systematically extracts the full contract from the client (envelopes, cell kinds incl. spill, format/style echo, WS op/event shapes), catalogs which library to use for OOXML/eval, and identifies the semantic edge cases (criteria wildcards, spill materialization, LWW-by-seq) that the prose only gestures at.",
+          "10": "Builds an explicit, evidence-backed contract map covering every subsystem, re-derives ambiguous Excel behaviors from authoritative reasoning or probing, and returns to the client/spec to resolve new ambiguities as they surface mid-build rather than assuming \u2014 orientation stays live across the whole horizon."
+        }
+      },
+      {
+        "id": "decomposition_milestones",
+        "spine": true,
+        "name": "Subsystem decomposition & sequencing",
+        "description": "Breaking an enormous product into ordered, independently-verifiable milestones (skeleton+health first, cell model, engine core, spill, each surface) with a defined done-check per milestone.",
+        "why_it_matters": "There are ~15 loosely-coupled subsystems with hard dependencies (engine before spill before pivots; server+persistence before everything). Treating it as one undifferentiated push, or building leaf features before the recompute core works, wastes the horizon and leaves nothing verifiable.",
+        "importance": 9,
+        "target_level": 9,
+        "anchors": {
+          "0": "No visible structure; jumps between unrelated features with no ordering rationale.",
+          "3": "A flat, generic todo list ('build engine', 'build API') with no dependency ordering or completion criteria.",
+          "5": "Sensible phase ordering \u2014 server/health/persistence, then cell model and recompute, then formula families, then surfaces \u2014 with rough per-phase goals.",
+          "8": "Dependency-aware milestone plan where each milestone has an explicit done-check (e.g. 'health returns ok and survives restart', 'linear chain recomputes topologically'), and later surfaces are deliberately staged behind the engine core they depend on.",
+          "10": "A living, prioritized milestone hierarchy that sequences by dependency AND by expected hidden-suite payoff, keeps a walking skeleton green throughout, and is revised as the true cost of subsystems (XLSX fidelity, spill, iterative calc) becomes clear."
+        }
+      },
+      {
+        "id": "verification_strategy",
+        "spine": true,
+        "name": "Self-built verification beyond the smoke suite",
+        "description": "Deliberately designing checks \u2014 running run.sh, exercising untested functions, comparing values against Excel/LibreOffice semantics, and testing performance budgets \u2014 rather than trusting the provided smoke tests.",
+        "why_it_matters": "The provided suite is explicitly non-exhaustive and grading is cell-by-cell against a held-out corpus with hard performance limits. Assuming green smoke = correct will pass the visible 5% and fail the hidden 95%; only self-designed verification catches wrong function semantics, spill edge cases, and >budget recompute.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "No verification; assumes code works once it runs, or never runs run.sh.",
+          "3": "Runs run.sh occasionally and treats a pass as done; no checks for untested functions or performance.",
+          "5": "Runs the smoke suite and manually exercises the main endpoints and a sampling of functions against expected Excel values.",
+          "8": "Builds own test probes for functions/behaviors the smoke suite doesn't cover (wildcard criteria, spill/#SPILL!, XLSX re-import, WS ops), and actually measures against the stated performance budgets rather than assuming.",
+          "10": "Runs a systematic verification regime: value-level checks against Excel semantics across function families, edge-case and error-sentinel coverage, XLSX round-trip via openpyxl, collaboration/LWW ordering, and performance benchmarking on large workbooks \u2014 with checks re-run as a regression guard as new subsystems land."
+        }
+      },
+      {
+        "id": "progress_monitoring",
+        "spine": true,
+        "name": "Coverage tracking across a vast surface",
+        "description": "Maintaining an accurate done-vs-remaining picture across ~15 subsystems and a large function catalog, and detecting when stuck on one piece (e.g. a single XLSX or spill bug).",
+        "why_it_matters": "The catalog and feature list are large enough to lose the plot; without tracking, whole function families or surfaces get silently dropped, or the agent sinks the whole horizon into one hard subsystem while others are untouched.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "No sense of what's done vs left; forgets whole subsystems; repeats or abandons work unknowingly.",
+          "3": "Vague recollection of progress; discovers late that major surfaces were never attempted.",
+          "5": "Keeps a checklist of subsystems/functions and updates it as items complete, giving a roughly accurate remaining-work picture.",
+          "8": "Tracks coverage at function/feature granularity, notices when it has been stuck on one bug for too long, and consciously time-boxes or defers to protect breadth.",
+          "10": "Maintains a precise, continuously-updated map of completion and known gaps across all subsystems and the full catalog, detects thrashing/circular-debugging early, and reallocates effort deliberately to keep the whole surface advancing rather than over-polishing one corner."
+        }
+      },
+      {
+        "id": "adaptation_correction",
+        "spine": true,
+        "name": "Course-correction on falsified assumptions",
+        "description": "Revising design or approach when a probe fails \u2014 wrong inferred contract, unmet performance budget, an intractable library, or divergent Excel semantics \u2014 instead of pushing ahead.",
+        "why_it_matters": "Early assumptions about wire shape, recompute architecture, or the chosen OOXML/eval library are likely to be wrong in places; the naive-recompute or naive-serialization path will blow the performance budgets. Recognizing and reworking these beats accumulating a broken foundation.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "Ignores failing tests/benchmarks and contradictory evidence; keeps building on a falsified assumption.",
+          "3": "Patches surface symptoms (hard-codes to pass a smoke case) without revisiting the wrong underlying design.",
+          "5": "When a test fails or a budget is missed, diagnoses and fixes the specific issue, adjusting the local approach.",
+          "8": "Recognizes when a foundational choice is wrong (e.g. full-recompute won't meet the dirty-only budget, or a library can't round-trip CF) and reworks the architecture rather than piling on workarounds.",
+          "10": "Treats divergence as signal: re-derives the affected part of the contract/design from evidence, propagates the correction across dependent subsystems, and verifies the fix \u2014 repeatedly steering the build back on course without over-reacting to noise."
+        }
+      },
+      {
+        "id": "coverage_prioritization",
+        "spine": false,
+        "name": "Breadth-vs-depth allocation under a huge scored surface",
+        "description": "Consciously allocating finite effort across an enormous, unevenly-weighted feature/function surface to maximize hidden-suite coverage rather than perfecting one area.",
+        "why_it_matters": "No agent can flawlessly implement every function and surface in the horizon; the ones who score well decide where breadth (many functions minimally correct) beats depth (one perfect subsystem), and ensure high-frequency Excel functionality lands before exotic corners.",
+        "importance": 6,
+        "target_level": 7,
+        "anchors": {
+          "0": "No prioritization; implements features in arbitrary order and runs out of horizon with core functionality missing.",
+          "3": "Implicitly follows the spec's listing order with no regard to payoff or effort cost.",
+          "5": "Prioritizes core, high-frequency functionality (basic cells, common functions, recompute) before niche surfaces, roughly by importance.",
+          "8": "Makes explicit allocation calls \u2014 covering the common lookup/math/text/aggregate functions and core surfaces broadly before investing in expensive corners (goal seek, CF round-trip, distributions), with a stated rationale.",
+          "10": "Continuously rebalances breadth vs depth against remaining horizon and expected payoff, deliberately deferring low-yield or high-cost items, and lands a coherent, broadly-correct product rather than a few deep spikes amid large gaps."
+        }
+      }
+    ]
+  }
+]
