@@ -11,7 +11,7 @@ import re
 from collections import Counter
 from typing import Any
 
-from .loader import Trial
+from .loader import Trial, detect_termination
 
 # Tool functions treated as "writing the deliverable" (object-level).
 _WRITE_TOOLS = {"apply_patch"}
@@ -70,19 +70,32 @@ def step_kind(step: dict) -> str:
     }.get(fn, "other")
 
 
+def _fmt_size(n: int) -> str:
+    """Compact char-count label, e.g. 742 -> '742', 12030 -> '12.0K'."""
+    return f"{n/1000:.1f}K" if n >= 1000 else str(n)
+
+
 def shape_step(step: dict) -> dict:
     """Render-ready view of a step for the template (full fidelity kept)."""
     c = first_call(step)
     args = (c.get("arguments") or {}) if c else {}
+    message = (step.get("message") or "").strip()
+    args_json = json.dumps(args, indent=2) if args else ""
+    observation = _obs_text(step)
+    # Total content size of the step (message + tool args + observation), so the
+    # giant apply_patch steps are easy to spot in the collapsed list.
+    size = len(message) + len(args_json) + len(observation)
     return {
         "id": step.get("step_id"),
         "source": step.get("source") or "?",
         "kind": step_kind(step),
         "action": action_summary(step),
-        "message": (step.get("message") or "").strip(),
+        "message": message,
         "tool_name": c.get("function_name") if c else None,
-        "args_json": json.dumps(args, indent=2) if args else "",
-        "observation": _obs_text(step),
+        "args_json": args_json,
+        "observation": observation,
+        "size": size,
+        "size_fmt": _fmt_size(size),
     }
 
 
@@ -144,12 +157,18 @@ def summarize(trial: Trial) -> dict:
         except Exception:
             duration = None
 
+    term = detect_termination(trial.trial_dir)
+
     return {
         "task": trial.task,
         "job": trial.job,
         "trial_id": trial.trial_id,
         "model": trial.agent.get("model_name"),
         "agent": trial.agent.get("name"),
+        # how the rollout ended (no explicit submit in SWE-Marathon)
+        "term_mode": term["mode"],
+        "term_label": term["label"],
+        "term_detail": term["detail"],
         # outcome
         "gates_passed": _num(trial.metrics, "gates_passed"),
         "gates_total": _num(trial.metrics, "gates_total"),
