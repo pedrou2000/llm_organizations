@@ -32,6 +32,7 @@ async def judge_metawork(
     trajectory_path: Path | str,
     task_spec: str,
     *,
+    rubric: Rubric | dict | None = None,
     rubric_model: str = DEFAULT_RUBRIC_MODEL_LABEL,
     score_model: str = DEFAULT_SCORE_MODEL_LABEL,
     concurrency: int = 8,
@@ -43,6 +44,10 @@ async def judge_metawork(
         trajectory_path: a trial dir (with agent/trajectory.json) or the file.
         task_spec: the task the agent was given (judge sees it; blind to
             outcome + identity).
+        rubric: pin a pre-synthesized rubric (a Rubric or its dict form) and
+            SKIP Stage A. Default None → synthesize fresh (the public contract).
+            Pinning is for rubric caching and for variance experiments that need
+            to hold the ruler fixed while re-running only Stage B.
         out_dir: if given, persist a stage-mirrored inspection tree under it:
             inputs/ (task_spec, blind trajectory), stage_a_rubric/ (synth prompt
             + rubric), stage_b_scoring/ (per-dimension prompts + verdicts), and
@@ -51,6 +56,7 @@ async def judge_metawork(
     Returns a MetaworkScore (never raises; failures recorded in `.errors`).
     """
     out_dir = Path(out_dir) if out_dir is not None else None
+    synth_cost = 0.0
     if out_dir is not None:
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "inputs").mkdir(exist_ok=True)
@@ -60,18 +66,24 @@ async def judge_metawork(
         # The meta-judge's (static) system prompt — its input alongside the task.
         (out_dir / "stage_a_rubric" / "prompt.md").write_text(RUBRIC_SYSTEM_PROMPT)
 
-    # --- Stage A: rubric ---
-    synth = await synthesize_rubric(task_spec, model_label=rubric_model)
-    if synth["rubric"] is None:
-        rubric = Rubric(task_read="", dimensions=[])
-        score = aggregate_scores(rubric, [])
-        score.errors.append(f"rubric_synth_failed: {synth.get('error')}")
-        score.cost_usd += synth.get("cost_usd", 0.0)
-        return score
-    rubric = Rubric.from_dict(synth["rubric"])
-    if out_dir is not None:
+    # --- Stage A: rubric (skipped when a rubric is pinned) ---
+    if rubric is not None:
+        rubric = rubric if isinstance(rubric, Rubric) else Rubric.from_dict(rubric)
+        rubric_dict = rubric.to_dict() if hasattr(rubric, "to_dict") else None
+    else:
+        synth = await synthesize_rubric(task_spec, model_label=rubric_model)
+        synth_cost = synth.get("cost_usd", 0.0)
+        if synth["rubric"] is None:
+            rubric = Rubric(task_read="", dimensions=[])
+            score = aggregate_scores(rubric, [])
+            score.errors.append(f"rubric_synth_failed: {synth.get('error')}")
+            score.cost_usd += synth_cost
+            return score
+        rubric = Rubric.from_dict(synth["rubric"])
+        rubric_dict = synth["rubric"]
+    if out_dir is not None and rubric_dict is not None:
         (out_dir / "stage_a_rubric" / "rubric.json").write_text(
-            json.dumps(synth["rubric"], indent=2))
+            json.dumps(rubric_dict, indent=2))
 
     # --- stage the blind trajectory (isolated + identity-scrubbed) ---
     stage_dir = (out_dir / "inputs") if out_dir is not None else None
@@ -109,7 +121,7 @@ async def judge_metawork(
 
     # --- aggregate ---
     score = aggregate_scores(rubric, verdicts)
-    score.cost_usd += synth.get("cost_usd", 0.0)
+    score.cost_usd += synth_cost
     if out_dir is not None:
         (out_dir / "score.json").write_text(json.dumps(score.to_dict(), indent=2))
     return score
