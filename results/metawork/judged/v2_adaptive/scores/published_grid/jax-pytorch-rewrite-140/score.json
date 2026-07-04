@@ -1,0 +1,321 @@
+{
+  "overall_gap": -0.28,
+  "overall_observed": 7.98,
+  "task_specific_gap": 1.0,
+  "spine_gaps": {
+    "orientation_research": 0,
+    "decomposition_milestones": -2,
+    "verification_strategy": -2,
+    "progress_monitoring": 1,
+    "adaptation_correction": 1
+  },
+  "dimensions": [
+    {
+      "id": "orientation_research",
+      "name": "Reverse-engineering the JAX source & contract",
+      "spine": true,
+      "importance": 10,
+      "weight": 0.2,
+      "target_level": 9,
+      "observed_level": 9,
+      "gap": 0,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "12-40",
+          "note": "Before writing any PyTorch, the agent read the actual renamed JAX sources end-to-end and repeatedly (pikachu_jax, mewtwo_jax, venusaur_jax, pokedex, pokeball, pokedex_config, pokemon_lora, pokemon_world), enumerating methods (embed_prefix/suffix, compute_loss, sample_actions) and the multi-expert transformer topology from the real code."
+        },
+        {
+          "steps": "42-52",
+          "note": "Ran the JAX code to dump recursive parameter paths/shapes via the same _pure_pokedex the benchmark uses, and probed pi05/paldea_300m configs to see how RMSNorm/adaptive-RMSNorm and ViT depth change \u2014 grounding the port in observed weight structure, not assumptions."
+        },
+        {
+          "steps": "74-128",
+          "note": "Systematic layer-by-layer numerical tracing against JAX: isolated Conv, LayerNorm epsilon (found flax default 1e-6), constructed a minimal flax MHA to compare projection math, checked pos_embedding, and discovered TF32 as the source of drift \u2014 inspecting intermediate tensors to find ground truth."
+        },
+        {
+          "steps": "96-124",
+          "note": "Probed the flax NNX ToNNX bridge to learn how PokemonCenter.img/llm submodules expose params and are called, working out exact access to embedding/pos_embedding values rather than guessing the submodule contract."
+        },
+        {
+          "steps": "26,169",
+          "note": "Recognized the architecture as a multi-expert transformer / flow-matching-style policy but verified each detail against the renamed source (e.g., analyzed time_broadcast/time_val semantics in sample_actions), following the code rather than a public-project prior."
+        }
+      ],
+      "reasoning": "The agent read the full renamed JAX module set, enumerated layers/methods/submodules, and then went well beyond that by running the JAX code to dump parameter shapes and by inspecting intermediate tensors layer-by-layer to pin down real discrepancies (LayerNorm epsilon, MHA math, TF32, pos_embedding, img/llm NNX access). This matches the [8] anchor's systematic graph tracing and clearly reaches into [10] via running JAX and comparing intermediates as ground truth while resisting the public-name trap. It falls just short of a fully explicit referenced spec and does not visibly probe noise=None/time=None default edge cases, so 9 rather than 10."
+    },
+    {
+      "id": "decomposition_milestones",
+      "name": "Phasing the port and the optimization campaign",
+      "spine": true,
+      "importance": 8,
+      "weight": 0.16,
+      "target_level": 8,
+      "observed_level": 6,
+      "gap": -2,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "2,58,226",
+          "note": "TaskCreate entries mark coarse phase boundaries (research \u2192 implementation \u2192 completion), showing sequencing intent but not a granular per-contract-member milestone list."
+        },
+        {
+          "steps": "62-66",
+          "note": "Scaffold contract (write model.py with all named entities), freeze it by copying to model_optimized.py, then run benchmark \u2014 the port-then-verify phasing is explicit and correctly ordered."
+        },
+        {
+          "steps": "130-140",
+          "note": "Optimization begins ONLY after benchmark PASS establishes a proven-correct baseline; step 134-140 records baseline before first experiment \u2014 satisfies the 'baseline green before any optimization' criterion of the high anchor."
+        },
+        {
+          "steps": "136-216",
+          "note": "Bounded optimization loop: candidate techniques tried iteratively (SDPA, precompute, timescale/inv_period caching, buffers), failures reverted and only successful ones re-applied \u2014 but techniques were generated ad hoc, not pre-planned against the 8-experiment budget."
+        },
+        {
+          "steps": "74-128",
+          "note": "Layer-level parity debugging was reactive (chasing a discrepancy) rather than declared upfront as a milestone with an exit tolerance; done-conditions leaned on the single benchmark rather than explicit per-milestone tests."
+        }
+      ],
+      "reasoning": "The agent clearly laid out the sensible phases (scaffold contract \u2192 parity \u2192 freeze model.py \u2192 clone \u2192 optimize) and, crucially, ordered them in a dependency-aware way so optimization started only from a benchmark-PASS checkpoint \u2014 matching a key element of the level-8 anchor. However, milestone done-conditions were largely implicit in the single benchmark rather than explicit verifiable exit tests per contract member, and the optimization campaign was improvised iteratively rather than pre-planned against the experiment budget. This places it above the level-5 'loose done-conditions' anchor but short of level 8's explicit, enumerated exit tests, landing at 6."
+    },
+    {
+      "id": "verification_strategy",
+      "name": "Building parity & output-preservation checks",
+      "spine": true,
+      "importance": 10,
+      "weight": 0.2,
+      "target_level": 9,
+      "observed_level": 7,
+      "gap": -2,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "74-88",
+          "note": "Built a series of diagnostic scripts comparing JAX vs PyTorch intermediate outputs (prefix/suffix embeds, sampling steps, Conv2d, LayerNorm, MHA projections) to localize a numerical discrepancy \u2014 genuine per-layer/intermediate-tensor parity checking beyond benchmark.py."
+        },
+        {
+          "steps": "94-126",
+          "note": "Continued block-by-block ViT diagnostics, isolating drift to LayerNorm epsilon (fixed step 80) and TF32 (fixed step 126); confirmed pos_embedding/conv/image identical. Demonstrates localizing mismatch to specific layers."
+        },
+        {
+          "steps": "66,130",
+          "note": "Relied on benchmark.py's PASS/FAIL as the end-to-end loss/sampling parity gate against the JAX reference rather than building an independent end-to-end harness."
+        },
+        {
+          "steps": "138-224",
+          "note": "Ran benchmark.py after each optimization experiment as the optimized-vs-baseline correctness gate and reverted on regressions (e.g. steps 140, 178, 208), but this equality gate is benchmark's own, not a self-constructed stronger check with fixed seeds/tolerances."
+        }
+      ],
+      "reasoning": "The agent went well beyond a smoke test: it constructed layer-by-layer intermediate-tensor comparisons against the JAX reference and localized discrepancies to specific layers (LayerNorm epsilon, TF32), which is the distinguishing feature of the level-8 anchor and clearly exceeds level 5's 'partial, no per-layer localization.' However, it fell short of full 8/10 because the end-to-end loss/sampling parity and the per-experiment optimized-vs-baseline equality gate were delegated to benchmark.py rather than built as an independent, reusable harness with explicitly defined tolerances and seeds. This places it between the 5 and 8 anchors, closer to 8 on localization strength \u2014 a 7."
+    },
+    {
+      "id": "progress_monitoring",
+      "name": "Tracking done-vs-remaining & the experiment budget",
+      "spine": true,
+      "importance": 7,
+      "weight": 0.14,
+      "target_level": 7,
+      "observed_level": 8,
+      "gap": 1,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "132-140",
+          "note": "Reads results.tsv and autoresearch_logs.md, explicitly sets the unoptimized version as baseline (54.938 ms, PASS) and begins logging each optimization experiment with idea and measured latency \u2014 establishing a running ledger before starting the campaign."
+        },
+        {
+          "steps": "150-168",
+          "note": "Logs experiments to results.tsv and maintains separate 'Successful Experiments' and 'Reverted Experiments' tables in autoresearch_logs.md; records each experiment (SDPA reverted, sample_actions precompute kept, timescale cache kept) with keep/discard decisions."
+        },
+        {
+          "steps": "140-146",
+          "note": "First optimization (SDPA) shown not to help; agent recognizes overhead exceeds benefit for tiny seq length and reverts by copying model.py back \u2014 detecting a dead end and discarding rather than pursuing it."
+        },
+        {
+          "steps": "176-184, 208-214",
+          "note": "After failed experiments, restores from correctness checkpoint and surgically re-applies ONLY the successful optimizations, keeping an accurate pointer to the current fastest-passing keeper (46.8 ms verified)."
+        },
+        {
+          "steps": "216-226",
+          "note": "Logs final reverted buffer experiment, runs git status to confirm exactly the right files, and does a final benchmark confirmation \u2014 closing out the experiment trail cleanly. Total ~5-6 experiments, well within the 8-cap."
+        }
+      ],
+      "reasoning": "The agent maintains an accurate running ledger of each optimization experiment (idea \u2192 latency/status \u2192 keep/discard) in both results.tsv and autoresearch_logs.md, using distinct successful/reverted tables, and always knows its current fastest-passing keeper by reverting to the correctness checkpoint and surgically re-applying only wins \u2014 matching the level-8 anchor. It stays comfortably within the 8-experiment budget and detects when optimizations don't help. It falls short of level 10 because it never explicitly reconciles a running experiment count against the 8-cap, does not maintain an explicit done-vs-remaining ledger of contract members, and does not proactively flag stuck states during the lengthy parity-debugging span."
+    },
+    {
+      "id": "adaptation_correction",
+      "name": "Course-correcting on parity failures & failed optimizations",
+      "spine": true,
+      "importance": 8,
+      "weight": 0.16,
+      "target_level": 8,
+      "observed_level": 9,
+      "gap": 1,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "68",
+          "note": "First benchmark failure (ViTEncoderBlock has no 'attn'); agent re-read the block structure and fixed the parameter-access assumption rather than guessing blindly."
+        },
+        {
+          "steps": "74-126",
+          "note": "Sustained intermediate-tensor diagnosis of a ~0.0013 parity gap: isolated prefix/suffix, ViT vs LLM, Conv, LayerNorm epsilon (fixed to flax 1e-6 at step 80), MHA math, block-by-block drift, then root-caused it to TF32 and disabled it (126). Systematic divergence-to-diagnosis using intermediate evidence."
+        },
+        {
+          "steps": "136-140",
+          "note": "First optimization (SDPA for ViT attention) didn't help; reverted immediately with a concrete rationale (kernel/transpose overhead dominates for tiny seq len) \u2014 abandoning an unpromising direction early."
+        },
+        {
+          "steps": "178-184",
+          "note": "After a failed inv_period-cache experiment, restored model.py and surgically re-applied only the two proven optimizations, keeping model.py as the untouched correctness anchor."
+        },
+        {
+          "steps": "196-214",
+          "note": "Registered-buffer experiment regressed latency; cleanly reverted by re-copying model.py and re-applying the two successful optimizations, then verified return to 46.8ms \u2014 safe roll-back to best passing state."
+        }
+      ],
+      "reasoning": "The agent consistently converted parity failures into targeted diagnoses using intermediate-tensor evidence (steps 74-126), fixing the actual divergent cause (LayerNorm epsilon, then TF32) rather than tweaking randomly, matching the level-8/10 markers. It preserved model.py as an untouched anchor and repeatedly re-derived model_optimized.py from it, cleanly reverting each failed optimization (SDPA, inv_period cache, registered buffer) while retaining the best passing variants and logging reverts. This exceeds the 8 anchor and satisfies nearly all of the 10 anchor; I withhold a full 10 only because the diagnostic 'written model update' and early-abandonment are strong but not exhaustively evidenced in the summarized log."
+    },
+    {
+      "id": "optimization_experiment_discipline",
+      "name": "Bounded empirical optimization loop",
+      "spine": false,
+      "importance": 7,
+      "weight": 0.14,
+      "target_level": 8,
+      "observed_level": 9,
+      "gap": 1,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "134-140",
+          "note": "Establishes the baseline explicitly (baseline latency logged, status PASS) and records it in results.tsv/autoresearch_logs.md before beginning optimization \u2014 a clean controlled starting point."
+        },
+        {
+          "steps": "136-146",
+          "note": "Experiment 1 (ViT attention -> scaled_dot_product_attention) is stated as a hypothesis, measured with benchmark.py, and cleanly reverted with reasoning (SDPA overhead worse for tiny seq len), reverting model_optimized.py from model.py."
+        },
+        {
+          "steps": "146-168",
+          "note": "Experiments 2-3 (sample_actions precompute, RoPE timescale cache) each measured with benchmark.py, kept, and logged to results.tsv plus 'Successful Experiments' table in autoresearch_logs.md."
+        },
+        {
+          "steps": "178-184, 208-214",
+          "note": "Revert-and-surgically-reapply pattern: restores model_optimized.py from untouched model.py then re-applies only the winning optimizations, avoiding redundant/accumulated changes and re-verifying latency each time."
+        },
+        {
+          "steps": "186-220",
+          "note": "Experiments 4-5 (inv_period cache, registered buffer) measured, found non-beneficial, reverted, and logged in the 'Reverted Experiments' table \u2014 full trail of both wins and losses."
+        },
+        {
+          "steps": "222-226",
+          "note": "git status check + final benchmark run confirms the kept variant passes and model.py is preserved; well within the 8-experiment cap."
+        }
+      ],
+      "reasoning": "Every optimization was a controlled experiment with a stated hypothesis, measured on the same benchmark.py, logged to both required files with baseline/latency/status, respected the 8-cap, kept the fastest passing variant, and left model.py untouched with the shim exporting the optimized checkpoint \u2014 fully satisfying the level-8 anchor. It exceeds 8 via the clean revert-and-reapply discipline that guards the parity invariant on every trial and a highly reconstructable trail separating successful vs. reverted experiments. It falls short of 10 only because prioritization was reasoning-driven rather than informed by torch.profiler analysis, so I place it at 9."
+    }
+  ],
+  "rubric": {
+    "task_read": "A long-horizon, two-phase engineering task: first faithfully port a deliberately renamed JAX flow-matching-style policy to PyTorch under an exact API contract (specific class/type/function names, several forward/sampling/embedding methods, a nested submodule structure), targeting layer-level and end-to-end numerical parity; then clone the correct model and optimize a separate file for inference latency while preserving outputs, capped at 8 experiments with a kept experiment trail. Difficulty comes from reverse-engineering the actual renamed code (NOT relying on the recognizable public project it resembles), achieving true numerical parity, and running a disciplined, budget-bounded optimization loop that must never trade away correctness. This warrants heavy, sustained meta-work: deep orientation, explicit milestones, self-built parity verification, tight progress/budget tracking, and repeated course-correction.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "name": "Reverse-engineering the JAX source & contract",
+        "description": "Reading and understanding the actual renamed JAX policy \u2014 its topology, layer shapes/semantics, the four required methods, and the PokemonCenter img/llm submodule structure \u2014 rather than acting from assumptions or public-project recognition.",
+        "why_it_matters": "The spec states the expected behavior is the provided JAX implementation, not any public project name; the code is deliberately renamed. Any port built from a guessed/remembered architecture rather than the real source will fail parity in ways that are expensive to discover late.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "Starts writing PyTorch (or pattern-matches to a known project like a public flow-matching policy) without reading the JAX source or mapping its structure.",
+          "3": "Skims a few JAX files; identifies some layers but leaves key pieces (sampling loop, embed_prefix/suffix contract, img/llm split, dtype/time handling) unexamined or assumed.",
+          "5": "Reads the main JAX module end-to-end and enumerates the layers, method signatures, and submodule structure well enough to attempt a faithful port of the obvious paths.",
+          "8": "Systematically traces the full computation graph \u2014 weight shapes, init, normalization, sampling/integration steps, noise/time semantics, and how PokemonCenter.img/llm feed forward/embed_* \u2014 and explicitly notes where the renamed code deviates from what the recognizable public analogue would do, so the port follows the source not the prior.",
+          "10": "Builds a precise, referenced spec of the JAX behavior (layer-by-layer shapes, dataflow, edge cases like noise=None/time=None defaults, num_steps integration), probes ambiguous points by running the JAX code or inspecting intermediate tensors, and uses that ground truth to drive the port \u2014 demonstrably resisting the public-name trap throughout."
+        },
+        "spine": true
+      },
+      {
+        "id": "decomposition_milestones",
+        "name": "Phasing the port and the optimization campaign",
+        "description": "Breaking the work into an ordered hierarchy \u2014 contract scaffolding, layer-level parity, end-to-end parity, then a bounded optimization loop \u2014 each with a concrete done-condition.",
+        "why_it_matters": "The task has two distinct phases with a hard dependency (optimization only makes sense once the checkpoint is numerically correct) and many discrete contract items; treating it as one undifferentiated push invites optimizing a still-wrong model or leaving contract members unimplemented.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "No structure; jumps between porting and optimizing with no sequencing or checkpoints.",
+          "3": "Implicit ordering only; lumps 'port the model' and 'make it fast' as two vague blobs with no per-milestone completion criteria.",
+          "5": "Lays out the sensible phases (scaffold contract \u2192 parity \u2192 freeze model.py \u2192 clone \u2192 optimize) and roughly tracks the required API members, but milestone done-conditions are loose.",
+          "8": "Defines explicit milestones each with a verifiable exit test (e.g. 'every named entity importable', 'each layer matches within tol', 'loss & sampling parity', 'baseline benchmark green before any optimization'), and correctly orders them so optimization starts only from a proven-correct checkpoint.",
+          "10": "Maintains a living, granular milestone structure covering all contract members and both phases, with crisp done-criteria, dependency-aware ordering, and a pre-planned optimization campaign (candidate techniques mapped to the 8-experiment budget) \u2014 updated as understanding grows."
+        },
+        "spine": true
+      },
+      {
+        "id": "verification_strategy",
+        "name": "Building parity & output-preservation checks",
+        "description": "Deliberately constructing checks that go beyond benchmark.py's PASS/FAIL \u2014 layer-level numerical comparison against JAX, end-to-end loss/sampling parity, and confirmation that the optimized model reproduces the correct model's outputs.",
+        "why_it_matters": "Final scoring is on topology, layer-level parity, end-to-end loss/sampling parity, and latency. The benchmark alone is insufficient evidence of numerical correctness; without self-built parity harnesses the agent cannot know the port is right or that optimizations preserved outputs.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "No verification beyond maybe importing the module; assumes correctness or relies solely on benchmark status.",
+          "3": "Spot-checks a forward pass runs without error; no numerical comparison to the JAX reference.",
+          "5": "Compares end-to-end outputs (loss and/or sampled actions) against the JAX reference at some tolerance and checks the optimized model against model.py, but coverage is partial (e.g. no per-layer localization, sampling path untested).",
+          "8": "Builds a reusable parity harness: per-layer/intermediate-tensor comparison to localize discrepancies, plus end-to-end loss and sample_actions parity under fixed noise/time, plus an explicit optimized-vs-baseline output-equality gate run for every optimization experiment.",
+          "10": "Designs layered, quantitative verification with defined tolerances and seeds spanning topology, every contract method, and both loss and deterministic-sampling paths; localizes any mismatch to a specific layer, re-runs parity as a regression guard after each change, and treats the benchmark's PASS/FAIL as necessary-but-not-sufficient alongside its own stronger checks."
+        },
+        "spine": true
+      },
+      {
+        "id": "progress_monitoring",
+        "name": "Tracking done-vs-remaining & the experiment budget",
+        "description": "Maintaining an accurate picture of which contract items and phases are complete, staying within the 8-experiment cap, and detecting stuck/circular debugging.",
+        "why_it_matters": "The task imposes a hard budget (\u22648 optimization experiments, keep the fastest passing) and requires a coherent experiment trail; losing track risks blowing the budget, re-running dead ends, or shipping a non-best or non-passing variant.",
+        "importance": 7,
+        "target_level": 7,
+        "anchors": {
+          "0": "No tracking; unclear what remains, no experiment count, trail files ignored or absent.",
+          "3": "Sporadic notes; loses track of which contract members are done or how many optimization experiments have been spent.",
+          "5": "Keeps results.tsv/autoresearch_logs.md updated and roughly knows remaining work and experiment count, with occasional lapses.",
+          "8": "Maintains an accurate running ledger of completed vs remaining contract items and each optimization experiment (idea \u2192 baseline_ms/latency_ms/status \u2192 keep/discard), respects the 8-cap, and notices when a debugging loop is going in circles and re-scopes.",
+          "10": "Runs a disciplined dashboard-quality trail: every experiment logged with hypothesis, measured deltas, pass/fail, and current best-passing pointer; continuously reconciles remaining work against the budget, explicitly flags stuck states early, and always knows which variant is the current fastest-passing keeper."
+        },
+        "spine": true
+      },
+      {
+        "id": "adaptation_correction",
+        "name": "Course-correcting on parity failures & failed optimizations",
+        "description": "Revising approach when a layer mismatches, when an assumption about the JAX code is falsified, or when an optimization breaks parity or fails to help \u2014 including reverting to the last known-good state.",
+        "why_it_matters": "Ports rarely match first try and optimizations often regress correctness or latency; the agent must diagnose, fix, or roll back rather than barrel ahead on a wrong port or ship a broken 'fast' model.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "Ignores mismatches/failed benchmarks and proceeds anyway, or keeps a variant that fails parity/latency.",
+          "3": "Reacts to failures with undirected trial-and-error tweaks; no diagnosis, may abandon a working state without a way back.",
+          "5": "Diagnoses and fixes clear failures and discards optimizations that fail parity or don't improve latency, mostly preserving the correct checkpoint.",
+          "8": "On a mismatch, forms a hypothesis from the parity/localization evidence, targets the actual divergent layer, and fixes it; treats a falsified assumption about the JAX source as a signal to re-read; cleanly reverts failed optimizations and retains the best passing one.",
+          "10": "Systematically converts each divergence into a diagnosis (using intermediate-tensor evidence), updates the mental/written model of the source, and adapts the plan; keeps model.py as an untouched correctness anchor, safely rolls optimized experiments forward/back, and abandons unpromising optimization directions early to spend the limited budget where evidence points."
+        },
+        "spine": true
+      },
+      {
+        "id": "optimization_experiment_discipline",
+        "name": "Bounded empirical optimization loop",
+        "description": "Running the latency-optimization phase as a rigorous, budget-bounded empirical campaign: comparable measurements via benchmark.py, a coherent recorded trail, and a correctness-preserving keep-best selection.",
+        "why_it_matters": "The spec explicitly caps effort at 8 experiments, mandates results.tsv/autoresearch_logs.md, and requires keeping the fastest PASSING implementation while never altering model.py \u2014 a distinctive experimental-methodology demand beyond generic progress tracking.",
+        "importance": 7,
+        "target_level": 8,
+        "anchors": {
+          "0": "Optimizes ad hoc with no measurements, no trail, or edits the correctness checkpoint; final choice not evidence-based.",
+          "3": "Makes changes and runs the benchmark occasionally but records little; selection of the final variant is not clearly tied to measured passing results.",
+          "5": "Each experiment is measured with benchmark.py and logged, and a passing improved variant is kept, but hypotheses/comparisons are thin or the trail is inconsistent.",
+          "8": "Treats optimization as controlled experiments: each has a stated hypothesis, is measured on the same benchmark, logged to results.tsv/autoresearch_logs.md with baseline/latency/improvement/status, respects the 8-cap, and the kept variant is provably the fastest PASSING one with model.py untouched and the shim exporting it.",
+          "10": "Runs a strategically sequenced campaign within budget \u2014 prioritizing high-expected-value techniques informed by profiling, avoiding redundant experiments, cleanly guarding the output-parity invariant on every trial \u2014 with a trail so clear the reasoning, measured trade-offs, and final selection are fully reconstructable."
+        },
+        "spine": false
+      }
+    ]
+  },
+  "cost_usd": 0.9065537999999999,
+  "errors": []
+}

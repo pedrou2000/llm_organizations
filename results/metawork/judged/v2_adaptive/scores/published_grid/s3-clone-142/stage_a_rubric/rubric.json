@@ -1,0 +1,101 @@
+{
+  "task_read": "This is an extremely large, long-horizon build: a multi-tenant S3-compatible object store spanning SigV4 auth (byte-exact against boto3), a broad data plane (multipart, versioning, ranged reads, conditional ops, policies, notifications, lifecycle), an admin JSON API, an audit log, a background lifecycle worker, concurrency guarantees, and a browser-verified web console with a precise DOM contract. Difficulty comes from breadth (many loosely-coupled subsystems), unforgiving exactness (SigV4 signatures, pinned ETag/error semantics, load-bearing data-testids), and a split grader (binary correctness stage + UX rubric worth half). A skilled practitioner would invest heavily and continuously in orientation, sequencing, self-built verification, and progress tracking \u2014 over-investment is hard to reach here; the risk is thrash and lost threads.",
+  "dimensions": [
+    {
+      "id": "orientation_research",
+      "name": "Spec decoding & S3/SigV4 fidelity research",
+      "description": "Extracting the exact contract from a dense spec and grounding the AWS-compatible behaviors (SigV4 canonicalization, pinned ETag/error/status semantics, boto3 quirks) before and while coding.",
+      "why_it_matters": "The correctness stage is binary and byte-exact against boto3; a misread of SigV4 rules, the multipart ETag formula, presigned/UNSIGNED-PAYLOAD handling, or the cross-tenant status matrix silently fails whole test families. Blind coding here is fatal.",
+      "importance": 9,
+      "target_level": 8,
+      "anchors": {
+        "0": "Starts implementing endpoints with no attempt to catalog the spec's requirements or understand SigV4/boto3 behavior.",
+        "3": "Skims the spec and codes from memory; treats SigV4 and the error/status matrix as things to guess at, discovering gaps only when tests fail.",
+        "5": "Enumerates the required operations and error codes, and correctly researches the core hard parts (SigV4 canonical request/signing, path-style routing) before implementing them.",
+        "8": "Systematically inventories the full contract (auth modes, pinned ETag/range/error semantics, tenant status matrix, console DOM testids, admin schemas) and probes real boto3 behavior to nail canonicalization edge cases (UNSIGNED-PAYLOAD, query-signing, clock skew) rather than assuming.",
+        "10": "Builds a durable reference of the exact contract and continuously validates ambiguous behaviors against ground truth (e.g. capturing real boto3 signed requests, confirming header casing/encoding), resolving under-specified corners with evidence and revisiting them as new subsystems expose new interactions."
+      },
+      "spine": true
+    },
+    {
+      "id": "decomposition_milestones",
+      "name": "Subsystem sequencing & verifiable milestones",
+      "description": "Breaking the build into an ordered hierarchy of independently-checkable subsystems (auth core \u2192 bucket/object CRUD \u2192 multipart/versioning \u2192 policies/notifications/lifecycle \u2192 admin/audit \u2192 console) with a defensible dependency order.",
+      "why_it_matters": "There are ~10 loosely-coupled subsystems plus two grading surfaces. Without milestone structure and a sane order (auth and storage substrate first, since everything depends on them), the agent risks half-finishing many pieces and passing none of the binary stage.",
+      "importance": 9,
+      "target_level": 8,
+      "anchors": {
+        "0": "No decomposition; codes in an undifferentiated stream with no notion of stages or completion criteria.",
+        "3": "A vague or flat to-do list that mixes trivial and load-bearing items, with no dependency ordering and no per-item definition of done.",
+        "5": "Clear list of the major subsystems tackled in a reasonable order (foundational auth/storage before dependent features), each treated as a discrete unit.",
+        "8": "Explicit milestone hierarchy with correct dependency sequencing and a stated 'done' check per milestone (e.g. 'boto3 can PUT/GET a signed object' before layering multipart), and the two grading surfaces scoped as separate tracks.",
+        "10": "Milestones are risk-ordered so the highest-uncertainty foundations (SigV4 exactness, concurrent storage substrate) are proven earliest, each with a concrete acceptance check, and the plan is re-partitioned as reality reveals coupling \u2014 sustaining a coherent map across the whole horizon."
+      },
+      "spine": true
+    },
+    {
+      "id": "verification_strategy",
+      "name": "Self-built verification against boto3 & the DOM contract",
+      "description": "Deliberately constructing checks \u2014 boto3 round-trips, curl/HTTP probes, concurrency stress, console DOM/testid checks \u2014 beyond the hidden grader, rather than assuming code works.",
+      "why_it_matters": "The grader is binary and hidden; the console is browser-verified against exact data-testids. The only way to know a subsystem passes is to reproduce the grader's conditions locally. Unverified subsystems are effectively untested until they silently fail.",
+      "importance": 10,
+      "target_level": 9,
+      "anchors": {
+        "0": "No verification; assumes endpoints work because they were written.",
+        "3": "Ad hoc manual pokes at a couple of endpoints; no boto3 round-trip, no concurrency check, no console DOM verification.",
+        "5": "Uses real boto3 to exercise the main data-plane operations and hits the admin/console APIs directly, catching obvious breakage.",
+        "8": "Systematic verification per subsystem: boto3 round-trips for edge cases (multipart ETag, ranged 206/416, conditional/precondition, cross-tenant status codes), a concurrency test for the 30-client requirement, and console checks that assert the required testids and side-effects.",
+        "10": "Builds a reusable verification harness that mirrors grader conditions across all subsystems (including presigned/UNSIGNED-PAYLOAD signing, notification webhook delivery/retry, lifecycle expiry with the fast-clock env var, audit-line atomicity under concurrency), runs it repeatedly to catch regressions, and treats a subsystem as done only when its checks are green."
+      },
+      "spine": true
+    },
+    {
+      "id": "progress_monitoring",
+      "name": "Coverage tracking across subsystems",
+      "description": "Maintaining an accurate live picture of which of the many subsystems/operations/error-codes are done, in progress, or untouched, and detecting stalls or circular debugging.",
+      "why_it_matters": "With dozens of operations and error codes across two grading surfaces over a long horizon, it is easy to lose the plot \u2014 believing the build is near-complete while whole families (e.g. notifications, lifecycle, a console view) are missing or half-done.",
+      "importance": 8,
+      "target_level": 7,
+      "anchors": {
+        "0": "No sense of what's done vs remaining; repeatedly rediscovers or re-touches the same areas.",
+        "3": "Vague mental tracking; loses track of which error codes/operations remain and drifts between areas without closure.",
+        "5": "Keeps a running checklist of subsystems/operations and marks them off as completed, giving a roughly accurate done-vs-remaining view.",
+        "8": "Granular, maintained tracking down to individual operations, error codes, and console testids, with explicit recognition when a subsystem is only partially done and when a debugging effort is going in circles.",
+        "10": "Sustains an accurate coverage map across the entire horizon, cross-checked against the spec's enumerated surface (every error code, every notification event, every admin route, every testid), and reliably surfaces stuck/thrashing states early enough to redirect effort instead of grinding."
+      },
+      "spine": true
+    },
+    {
+      "id": "adaptation_correction",
+      "name": "Course-correction on falsified assumptions",
+      "description": "Revising approach when a verification fails or a boto3/SigV4 assumption is disproven, rather than repeatedly patching a broken model.",
+      "why_it_matters": "SigV4 and byte-exact behaviors are notorious for subtle mismatches; the agent will hit failing signatures and mismatched status codes. Progress depends on diagnosing the true cause and revising, not re-trying superficial fixes on a wrong mental model.",
+      "importance": 8,
+      "target_level": 7,
+      "anchors": {
+        "0": "Ignores failures or keeps making the same change; barrels ahead on assumptions already shown false.",
+        "3": "Reacts to failures with random tweaks and no root-cause reasoning; abandons hard subsystems instead of correcting course.",
+        "5": "When a check fails, investigates the cause and makes a targeted fix, adjusting the approach for that subsystem.",
+        "8": "Diagnoses failures to root cause (e.g. isolating exactly which SigV4 canonicalization step diverges from boto3), and revises the design or shared abstractions when a foundational assumption proves wrong.",
+        "10": "Treats divergence as signal: pinpoints root causes with evidence, propagates the correction across all affected subsystems (not just the failing case), and updates the plan/verification so the same class of error can't recur \u2014 sustaining forward progress through repeated hard mismatches."
+      },
+      "spine": true
+    },
+    {
+      "id": "grading_surface_allocation",
+      "name": "Effort allocation across the split grader",
+      "description": "Deliberately budgeting effort between the binary correctness stage and the browser-verified console UX rubric, which each contribute half the final score.",
+      "why_it_matters": "The console UX is worth half the score yet is easy to under-serve while sinking unbounded time into SigV4/data-plane perfection; conversely, a polished console with a broken data plane also caps the score. Explicit allocation across the two surfaces is a task-specific meta-decision beyond generic sequencing.",
+      "importance": 6,
+      "target_level": 6,
+      "anchors": {
+        "0": "Pours all effort into one surface (e.g. the data plane) and never meaningfully addresses the other.",
+        "3": "Acknowledges both surfaces but lets one consume nearly all effort with no deliberate balancing.",
+        "5": "Allocates real effort to both the correctness stage and the console, ensuring neither is left as a stub.",
+        "8": "Explicitly reasons about the 50/50 weighting and paces work so both surfaces reach a passing bar, defending the console's required views/testids and side-effects while securing core data-plane correctness.",
+        "10": "Actively manages the effort budget across the horizon against the split grader \u2014 securing must-pass foundations on both surfaces first, then investing marginal effort where it yields the most score, and revisiting the balance as each surface's state becomes clear."
+      },
+      "spine": false
+    }
+  ]
+}

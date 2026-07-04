@@ -1,0 +1,85 @@
+{
+  "task_read": "A long-horizon systems task: fix an existing partial WebAssembly interpreter (bugs + unimplemented functions) and then implement the entire SIMD 128-bit proposal \u2014 hundreds of opcodes across ~10 instruction families, a new v128 value type, and many subtle semantics (lane shapes, saturation, NaN handling, signed/unsigned, rounding). Difficulty comes from breadth (hundreds of ops), depth (bit-exact IEEE/saturation correctness), a hard constraint (do not touch spec.rs/main.rs, keep public signatures), and a demanding bar (score must equal exactly 1.0). Spec-test JSON files give a precise, per-assertion oracle, so meta-work is heavily rewarded: orienting to the skeleton, sequencing families, and running spec tests incrementally are the difference between steady convergence and thrash across a huge opcode surface.",
+  "dimensions": [
+    {
+      "id": "orientation_research",
+      "name": "Understanding the skeleton, decode/runtime contract, and spec-test harness",
+      "description": "Reading the existing interpreter (decode.rs, runtime.rs, types.rs, spec.rs) to learn the value-stack model, dispatch structure, and public items that must be preserved, and understanding how spec_json tests encode assertions before writing SIMD code.",
+      "why_it_matters": "The task forbids rewriting and pins public signatures; SIMD support must slot into the existing value type / dispatch machinery. Guessing opcode encodings or value representation without reading the skeleton and a sample spec JSON leads to pervasive rework across hundreds of ops.",
+      "importance": 9,
+      "target_level": 8,
+      "anchors": {
+        "0": "Starts editing or adding SIMD handlers without reading the existing source or any spec JSON; unaware which items spec.rs/main.rs import.",
+        "3": "Skims one or two files; runs a build; has a vague idea of the value stack but never inspects the decode dispatch or a spec-test JSON structure.",
+        "5": "Reads decode.rs/runtime.rs/types.rs enough to locate where value types and opcode dispatch live, identifies the unimplemented/buggy functions, and inspects at least one spec JSON to understand assertion format before coding.",
+        "8": "Builds an accurate mental model: how values flow on the stack, how memarg/LEB128 decoding works, exactly which public items are locked by spec.rs/main.rs, how v128 must integrate with the existing Value enum, and how the 0xFD u32 sub-opcode space maps to instruction families \u2014 cross-checked against a real spec JSON and the WASM SIMD encoding.",
+        "10": "All of the above, plus proactively surfacing the genuinely tricky contracts before they bite (NaN canonicalization in assert_return, signed/unsigned lane semantics, saturation vs wrapping, load_lane memarg+laneidx encoding), and using the existing MVP opcode handlers as a template so SIMD code matches house style and reuses helpers rather than reinventing them."
+      },
+      "spine": true
+    },
+    {
+      "id": "decomposition_milestones",
+      "name": "Sequencing the fix + the SIMD opcode families into checkable milestones",
+      "description": "Breaking the work into an ordered plan \u2014 first make MVP tests green (fix bugs/unimplemented funcs), then add v128 plumbing, then implement SIMD families (const/splat/lanes, bitwise, int arith, float arith, saturating, widen/narrow, conversions, dot/q15, loads/stores) \u2014 each tied to specific spec JSON files as done-signals.",
+      "why_it_matters": "With hundreds of opcodes and a 1.0 bar, treating this as one undifferentiated push guarantees losing track of what's done. A family-by-family order, each gated on its spec file passing, converts an overwhelming surface into a sequence of verifiable wins.",
+      "importance": 9,
+      "target_level": 9,
+      "anchors": {
+        "0": "No decomposition; implements opcodes in arbitrary order with no notion of milestones or which spec files gate which work.",
+        "3": "A flat, generic todo like 'implement SIMD' with maybe two coarse buckets; no mapping to spec test files; no explicit ordering rationale.",
+        "5": "Separates the MVP-fix phase from SIMD, and lists the SIMD families as sub-goals; roughly maps families to their spec JSON files as completion checks.",
+        "8": "A clear ordered hierarchy: MVP green first, then v128 type + const/splat/lane extract-replace as the foundation, then dependent families in a sensible order (bitwise \u2192 int arith \u2192 float \u2192 saturating \u2192 widen/narrow \u2192 conversions \u2192 loads/stores \u2192 dot/q15), each milestone bound to its specific spec_json/simd/*.json file as the done-signal, with dependencies respected (e.g. lane ops before shuffle).",
+        "10": "That ordering plus deliberate sequencing that front-loads shared infrastructure (a v128 representation + lane-extraction/reconstruction helpers) so later families collapse to thin wrappers, prioritizes families by assertion count / risk, and keeps the milestone list live and accurate as scope is discovered, so 'done vs remaining' is always legible across the full opcode surface."
+      },
+      "spine": true
+    },
+    {
+      "id": "verification_strategy",
+      "name": "Driving development with per-file spec tests and the full-suite score",
+      "description": "Deliberately using the provided spec-test oracle: running individual spec JSON files per family during development and the aggregate run_tests.py score for overall progress, rather than assuming correctness or only checking at the end.",
+      "why_it_matters": "The task ships a precise per-assertion oracle and demands exactly 1.0. An agent that leverages per-file tests as a tight feedback loop converges; one that only builds and eyeballs, or runs the whole suite blindly, cannot localize which of hundreds of ops is wrong.",
+      "importance": 10,
+      "target_level": 9,
+      "anchors": {
+        "0": "Never runs spec tests (or only `cargo build`); declares completion without executing the oracle.",
+        "3": "Runs the full suite occasionally but never isolates individual family JSON files; treats a low pass rate as one opaque number with no per-assertion diagnosis.",
+        "5": "Runs the relevant per-family spec JSON after implementing each family and the full suite periodically; reads FAIL lines to find broken assertions.",
+        "8": "Tight, deliberate loop: implement a family \u2192 run its specific spec JSON \u2192 read the exact failing assertion (line N, expected vs got) \u2192 fix \u2192 re-run, and uses the aggregate score to confirm no regressions in already-green files before moving on.",
+        "10": "All that, plus verification designed for the subtle cases: deliberately checks NaN/canonical-NaN assertions, saturation boundary lanes, signed vs unsigned extract, and rounding modes; distinguishes a genuine semantic bug from a decode/encoding bug by narrowing to minimal failing cases; treats 'passes now' skeptically and confirms every previously-passing file still passes, driving toward a fully-earned 1.0 rather than a plateau."
+      },
+      "spine": true
+    },
+    {
+      "id": "progress_monitoring",
+      "name": "Tracking pass-rate and done-vs-remaining across the opcode surface",
+      "description": "Maintaining an accurate, current picture of which families/files pass, which remain, and whether recent edits raised or lowered the aggregate score, over a very long horizon.",
+      "why_it_matters": "Hundreds of opcodes and many spec files mean it is easy to lose the plot, re-touch already-correct code, or forget an entire family. An accurate running ledger tied to the score keeps the agent converging monotonically toward 1.0.",
+      "importance": 8,
+      "target_level": 8,
+      "anchors": {
+        "0": "No sense of overall progress; cannot say which families are done or what the current pass rate is.",
+        "3": "Vague recollection of progress; occasionally re-implements or re-debugs something already working; score checked rarely and not compared over time.",
+        "5": "Keeps a usable checklist of families and roughly tracks the pass rate as work proceeds, noticing which spec files are green.",
+        "8": "Maintains a precise, updated ledger of per-file pass/fail and the aggregate score trend, notices immediately when an edit drops previously-passing assertions (regression), and detects stalls where a family's failures aren't decreasing.",
+        "10": "Sustained, self-aware monitoring across the whole horizon: always knows exact done-vs-remaining and current score, catches circular/thrashing debugging early (same file failing repeatedly), and reallocates effort toward the highest-assertion-count gaps to close the last distance to 1.0 efficiently rather than polishing already-green areas."
+      },
+      "spine": true
+    },
+    {
+      "id": "adaptation_correction",
+      "name": "Revising approach when spec failures reveal wrong assumptions",
+      "description": "When a spec test contradicts an assumed encoding or semantic (e.g. NaN handling, lane order, saturation, memarg/laneidx layout, or a pre-existing MVP bug), changing the model/implementation rather than repeating the same failing fix.",
+      "why_it_matters": "The interpreter already contains bugs, and SIMD has many counter-intuitive semantics; the constraint against rewriting means fixes must be surgical. Barrelling ahead on a falsified assumption about encoding or float semantics wastes the horizon and blocks 1.0.",
+      "importance": 8,
+      "target_level": 8,
+      "anchors": {
+        "0": "Ignores contradicting test failures or keeps re-applying the same non-working change; never revisits an assumption.",
+        "3": "Reacts to failures with superficial tweaks (guessing constants) without diagnosing the underlying wrong model; sometimes abandons a family when stuck.",
+        "5": "When a family's tests fail, forms a hypothesis about the cause (wrong lane order, sign handling, encoding) and adjusts; corrects the identified MVP bugs based on failing MVP assertions.",
+        "8": "Diagnoses root causes from the failing assertion detail and updates the mental model accordingly \u2014 e.g. realizing extract_lane_s must sign-extend, that trunc_sat clamps to lane bounds, or that canonical NaN comparison is required \u2014 then generalizes the fix across the affected family.",
+        "10": "Systematic course-correction over the long horizon: recognizes when a wrong shared assumption (v128 byte order, LEB128 sub-opcode parsing, memory-endianness) is causing failures across many families and fixes it at the root, revises the plan/sequencing when a family proves harder than expected, and confirms the correction resolved the whole class of failures rather than one instance \u2014 without regressing prior work."
+      },
+      "spine": true
+    }
+  ]
+}

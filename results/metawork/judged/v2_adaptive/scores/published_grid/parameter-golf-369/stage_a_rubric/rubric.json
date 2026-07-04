@@ -1,0 +1,101 @@
+{
+  "task_read": "A long-horizon ML engineering task: train a language model on a WikiText BPE-8K corpus and submit a \u226432MB int8-quantized checkpoint that scores val_bpb < 0.983 on a held-out split. Difficulty comes from a joint constraint (fit under 32MB after quantization AND beat the bpb target), an exact and dual-path loading/forward/loss contract that silently fails if violated, iterative training under a noisy local proxy (val shard \u2248\u00b10.05 of grader), and finite compute. A skilled practitioner would invest heavily in understanding the template and contract, planning the parameter/size budget, building an independent verification harness, and monitoring/adapting training over many hours.",
+  "dimensions": [
+    {
+      "id": "orientation_research",
+      "name": "Understanding the pipeline, data, and loading contract",
+      "description": "Reading the template, tokenizer, .bin data format, int8 quantization scheme, bpb metric, and the exact verification/loading contract before and while building.",
+      "why_it_matters": "The task hides two traps: an exact dual-path load/forward/loss contract (a subtle mismatch scores zero regardless of model quality) and a hard byte budget. Acting before understanding these wastes an entire training run.",
+      "importance": 9,
+      "target_level": 8,
+      "anchors": {
+        "0": "Starts editing/training with no inspection of the template, data shards, tokenizer, or loading contract.",
+        "3": "Skims the template and runs it; unaware of the forward(input_ids, target_ids) loss requirement, the two load paths, or how bpb is computed.",
+        "5": "Reads the template and the contract, confirms data shard format and tokenizer/vocab size, and understands that int8 + size drive a parameter budget before committing to an architecture.",
+        "8": "Deliberately reverse-engineers the full contract (both load paths, logits-depend-on-position, loss==cross_entropy tolerance, int8 dequant round-trip, exact byte accounting incl. compression) and probes the environment (GPU, data volume, tokenizer) so the design is grounded in measured facts, not assumptions.",
+        "10": "Above, plus derives a quantitative param/size/bpb picture from first principles (bytes-per-param under int8+compression, rough capacity-vs-bpb intuition), and pins down every ambiguity in the contract with a tiny probe before investing compute \u2014 leaving no silent-failure mode unexamined."
+      },
+      "spine": true
+    },
+    {
+      "id": "decomposition_milestones",
+      "name": "Staging the build: pipeline \u2192 budget \u2192 scale \u2192 quantize \u2192 verify",
+      "description": "Breaking the work into ordered milestones (working end-to-end tiny run, size budget, local bpb measurement, scale-up, quantization, contract verification) each with an explicit done-check.",
+      "why_it_matters": "The joint size/quality/contract constraint means a monolithic 'train a big model' push risks discovering at the end that it's oversized or unloadable. Ordered milestones de-risk the horizon.",
+      "importance": 8,
+      "target_level": 8,
+      "anchors": {
+        "0": "One undifferentiated attempt: configure a model and train, with no intermediate checkpoints of progress.",
+        "3": "Implicit stages in the agent's head but no explicit sub-goals or done-criteria; ordering is reactive.",
+        "5": "Clear sequence: get a tiny model training and saving/loading first, establish the param budget, measure local val_bpb, then scale \u2014 with rough success criteria per stage.",
+        "8": "Explicit milestone hierarchy with concrete gates (e.g. 'end-to-end quantized round-trip loads and scores locally before any long run'; 'param count fits 32MB with margin'), sequenced so that cheap high-risk checks (contract, size) precede expensive ones (long training).",
+        "10": "Milestones are risk-ordered and quantitatively gated, explicitly front-loading the failure modes that would waste the most compute (contract conformance, size overflow, quant degradation) so a long final run is only launched once every cheap invalidator has been retired."
+      },
+      "spine": true
+    },
+    {
+      "id": "verification_strategy",
+      "name": "Independently verifying loadability, contract, size, and bpb",
+      "description": "Designing checks beyond 'training loss went down': that the checkpoint loads via the specified path, forward/loss contract holds, file is \u226432MB, quantization round-trips, and local bpb mirrors the grader's computation.",
+      "why_it_matters": "The grader loads through a strict interface and enforces a hard byte cap; a great model that violates any of these scores zero. Verification is the single highest-leverage meta-work faculty here.",
+      "importance": 10,
+      "target_level": 9,
+      "anchors": {
+        "0": "Trains and submits without ever loading its own checkpoint through the grader's interface or checking file size.",
+        "3": "Checks training loss and maybe file size, but never exercises the actual load_model_for_verification / dequant path or confirms the loss==cross_entropy contract.",
+        "5": "Loads the saved checkpoint back through the specified path, confirms it is \u226432MB, and computes local val_bpb the way the grader would; catches obvious breakage.",
+        "8": "Builds a standalone verification harness that mimics the grader end-to-end (fresh-process load via the exact signature, logits-shape and position-dependence, scalar-loss equality within tolerance, int8 dequant fidelity, byte count) and treats passing it as the gate for submission.",
+        "10": "Verification harness is comprehensive and adversarial: tests both load paths, quantify's quantization's bpb cost separately from the fp model, accounts for the ~0.05 proxy-vs-grader gap by targeting margin below 0.983, and re-runs after every material change so no regression reaches submission unnoticed."
+      },
+      "spine": true
+    },
+    {
+      "id": "progress_monitoring",
+      "name": "Tracking bpb trajectory and detecting plateaus/divergence",
+      "description": "Maintaining an accurate picture of val_bpb vs the 0.983 target over training, and detecting overfitting, divergence, plateau, or wasted runs across the horizon.",
+      "why_it_matters": "Training is long and the only feedback is a noisy local proxy; without disciplined monitoring the agent burns compute on a run that will never reach target or silently overfits.",
+      "importance": 8,
+      "target_level": 8,
+      "anchors": {
+        "0": "No periodic val evaluation; discovers final bpb only at the end (or never).",
+        "3": "Occasionally glances at loss but no consistent val_bpb tracking against the target; can't say how far from passing.",
+        "5": "Periodically evaluates val_bpb during training and compares to 0.983, noticing obvious plateaus or divergence.",
+        "8": "Tracks the val_bpb trajectory against target with enough cadence to project whether the current run will pass, distinguishing real signal from proxy noise, and identifies stuck/plateaued runs early rather than at the end.",
+        "10": "Maintains a quantitative, extrapolated view (curve shape, diminishing returns, time-to-target vs remaining budget) that reliably distinguishes 'keep training', 'this run won't make it', and 'overfitting' \u2014 and acts on that read before compute is wasted."
+      },
+      "spine": true
+    },
+    {
+      "id": "adaptation_correction",
+      "name": "Revising architecture/hyperparameters/quantization when reality diverges",
+      "description": "Changing the model size, training recipe, or quantization approach when a run overflows the budget, fails to converge, plateaus above target, or loses bpb to quantization.",
+      "why_it_matters": "First attempts rarely satisfy both the size cap and the bpb target; the ability to diagnose why and change course (rather than re-running the same losing configuration) determines whether the task is ever passed.",
+      "importance": 8,
+      "target_level": 8,
+      "anchors": {
+        "0": "Repeats the same failing configuration, or ignores that the checkpoint is oversized / above target, and submits anyway.",
+        "3": "Makes blind tweaks after a failure without diagnosing the cause; changes are not clearly informed by evidence.",
+        "5": "When a run overflows size or misses the bpb target, diagnoses the likely cause and makes a reasoned change (smaller/larger model, longer training, different lr) before retrying.",
+        "8": "Course-corrections are evidence-driven and target the actual bottleneck (e.g. recognizes quantization is costing bpb and adjusts scheme; rebalances params vs steps against the size budget) rather than thrashing across unrelated knobs.",
+        "10": "Systematically isolates whether size, capacity, optimization, or quantization is the binding constraint and adapts the design accordingly, updating the plan/budget in light of what was learned \u2014 converging efficiently instead of re-debugging in circles."
+      },
+      "spine": true
+    },
+    {
+      "id": "compute_budget_allocation",
+      "name": "Allocating finite compute across exploration and the final run",
+      "description": "Deciding how much compute to spend on small-scale experiments vs the long final training run, informed by rough scaling intuition.",
+      "why_it_matters": "Compute is finite and a full training run is expensive; spending it all on exploration or committing early to an unvalidated long run both fail. Deliberate allocation is a distinct planning faculty here.",
+      "importance": 6,
+      "target_level": 7,
+      "anchors": {
+        "0": "No sense of budget; either endlessly tinkers at small scale or immediately commits everything to one untested long run.",
+        "3": "Vaguely aware compute is limited but allocation is ad hoc.",
+        "5": "Runs cheap small-scale experiments to de-risk choices before committing to a longer run, keeping some budget in reserve.",
+        "8": "Explicitly allocates budget between exploration and the final run, using small runs to inform architecture/recipe and sizing the final run to fit remaining compute.",
+        "10": "Uses scaling-informed reasoning (small-run signal extrapolated to the final configuration) to spend compute where it most improves bpb, avoiding both premature commitment and analysis paralysis, and adjusts allocation as results come in."
+      },
+      "spine": false
+    }
+  ]
+}

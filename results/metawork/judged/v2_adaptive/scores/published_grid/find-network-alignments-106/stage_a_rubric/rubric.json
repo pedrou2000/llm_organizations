@@ -1,0 +1,101 @@
+{
+  "task_read": "A long-horizon, open-ended research/optimization task: align two pairs of PPI networks to hit specific S3 (and NC) thresholds. Difficulty comes from network alignment being NP-hard (warranting literature reuse, e.g. SANA/MAGNA/GHOST), from two separate deliverables with different bars, and crucially from the fact that S3/NC are fully computable locally \u2014 so the payoff hinges on building a faithful self-check and iterating a stochastic optimizer against it under a compute budget. A skilled practitioner invests heavily in orientation, verification, and adaptive iteration; decomposition is moderate.",
+  "dimensions": [
+    {
+      "id": "orientation_research",
+      "name": "Problem & literature orientation",
+      "description": "Understanding the graph format, the exact S3/NC definitions, and surveying known network-alignment methods before committing to an approach.",
+      "why_it_matters": "Network alignment is NP-hard; naive greedy approaches rarely clear S3>=0.55. Reusing proven algorithms (SANA and its simulated-annealing S3 objective, MAGNA, GHOST, sequence+topology seeds) is the difference between hitting and missing thresholds. Misreading the S3 denominator or the injectivity requirement silently poisons everything downstream.",
+      "importance": 9,
+      "target_level": 8,
+      "anchors": {
+        "0": "Starts coding an alignment with no inspection of the graph files or the metric definitions.",
+        "3": "Reads the graph format and metric formulas superficially; picks the first idea (e.g. degree-sorted greedy) with no awareness of the field.",
+        "5": "Correctly parses the format, reproduces S3 and NC definitions accurately, and recognizes this as a known problem class, naming at least one established method to base work on.",
+        "8": "Deliberately researches specific network-alignment methods (e.g. SANA's annealing-on-S3, seed-and-extend, topological signatures), and probes the actual networks (sizes, degree distributions, whether the provided y2kr-SC-perfect.align can seed or bound the search) to choose an approach fit to THIS data.",
+        "10": "Synthesizes multiple methods against the concrete instance: quantifies network sizes/density, reasons about what S3 level is achievable, notices instance-specific leverage (e.g. Yeast2KReduced\u2282SC structure, exploiting the reference alignment as a warm start or upper bound), and lets that analysis directly shape the algorithm and objective before heavy coding."
+      },
+      "spine": true
+    },
+    {
+      "id": "decomposition_milestones",
+      "name": "Pipeline decomposition across two deliverables",
+      "description": "Breaking work into ordered sub-goals (parser \u2192 scorer \u2192 aligner \u2192 optimizer \u2192 two outputs) each with a done-check, and sequencing the two independent deliverables sensibly.",
+      "why_it_matters": "There are two distinct targets with different thresholds and a shared toolchain. Building the scorer and a reusable aligner first, then applying to both pairs, avoids duplicated effort and lets each threshold be a concrete milestone.",
+      "importance": 6,
+      "target_level": 6,
+      "anchors": {
+        "0": "Treats the whole thing as one undifferentiated blob; no separable steps.",
+        "3": "Vague ordering in prose; no explicit done-criteria per step.",
+        "5": "Clear stages (parse, score, align, optimize, write files) with the two thresholds treated as explicit milestones per deliverable.",
+        "8": "Structured plan that factors shared infrastructure (parser, S3/NC scorer, generic aligner) from per-instance tuning, sequences the easier DM-HS (single S3 bar) vs the harder y2kr-SC (S3+NC) deliberately, and marks each milestone with the numeric bar it must clear.",
+        "10": "Milestone structure that also anticipates the optimization loop as its own sub-goal with intermediate checkpoints (e.g. 'reach S3=0.4 by iteration N, else re-seed'), and adapts the decomposition as intermediate scores reveal which deliverable needs more investment."
+      },
+      "spine": true
+    },
+    {
+      "id": "verification_strategy",
+      "name": "Faithful local metric self-checking",
+      "description": "Building an independent scorer that computes S3 and NC exactly as specified, plus validating output-file well-formedness (injective mapping, exact node names, every V1 node covered).",
+      "why_it_matters": "The grader's metric is fully reproducible offline. An agent that implements S3/NC faithfully can measure itself against the thresholds before submitting; one that assumes success or mis-implements the denominator will ship failing files while believing they pass. This is the single highest-leverage meta-move on this task.",
+      "importance": 10,
+      "target_level": 9,
+      "anchors": {
+        "0": "No local scoring; submits alignments without measuring S3/NC.",
+        "3": "Some ad hoc sanity check (e.g. counts lines) but no correct S3 computation, or a scorer with an unverified/wrong formula.",
+        "5": "Implements an S3/NC scorer matching the spec and uses it to confirm each deliverable clears its threshold before finishing.",
+        "8": "Scorer is validated for correctness (e.g. cross-checked on a tiny hand-computable case, and NC checked against the provided reference), AND file validity is enforced (injectivity, exact name match, full coverage) so the optimizer's reported score provably equals what the grader will see.",
+        "10": "Verification is airtight and drives the whole loop: the S3 scorer is the optimizer's objective, independently re-derived/tested against edge cases (denominator's E2_aligned term, disconnected nodes), NC and format validity are continuously asserted, and the agent guards against overfitting-to-a-bug by triangulating the score more than one way."
+      },
+      "spine": true
+    },
+    {
+      "id": "progress_monitoring",
+      "name": "Tracking score progress over optimization runs",
+      "description": "Maintaining an accurate picture of current S3/NC vs targets across (potentially long) stochastic optimization, detecting plateaus/thrashing and knowing which deliverable still falls short.",
+      "why_it_matters": "Simulated-annealing / iterative aligners run for many iterations with noisy improvement. Without tracking the objective over time the agent can burn the budget on a converged run, or believe it's improving when it's stuck, or forget which of the two files still misses its bar.",
+      "importance": 8,
+      "target_level": 7,
+      "anchors": {
+        "0": "No visibility into intermediate scores; runs something once and hopes.",
+        "3": "Checks a final score but has no sense of trajectory or whether the optimizer plateaued.",
+        "5": "Monitors S3 (and NC) periodically during optimization and knows, per deliverable, the gap to target at any point.",
+        "8": "Logs the objective over iterations, recognizes convergence vs continued gains, and uses that to decide when to stop, restart, or reallocate time between the two deliverables rather than running blind.",
+        "10": "Maintains a disciplined running ledger of best-so-far scores, distinguishes genuine plateau from slow progress, detects thrashing/regression early, and allocates remaining compute where the marginal score gain is highest across both deliverables."
+      },
+      "spine": true
+    },
+    {
+      "id": "adaptation_correction",
+      "name": "Course-correction when a target is missed",
+      "description": "Revising algorithm, seeding, objective, or parameters when a deliverable stalls below its threshold, rather than repeating a converged run.",
+      "why_it_matters": "A first approach (e.g. greedy topological match) may plateau below S3=0.55 or NC=0.30. Progress requires switching strategy \u2014 better seeds, annealing, sequence signals, exploiting the reference alignment for the yeast pair \u2014 instead of re-running the same thing.",
+      "importance": 8,
+      "target_level": 8,
+      "anchors": {
+        "0": "Barrels ahead on the initial approach even when it clearly falls short; never changes tack.",
+        "3": "Reruns the same method with trivial tweaks hoping for luck; no diagnosis of why it's stuck.",
+        "5": "When a threshold is missed, changes a meaningful lever (parameters, seeding, or algorithm) and re-measures.",
+        "8": "Diagnoses WHY a target is missed (e.g. S3 plateau implies weak topological matching; NC gap implies wrong node correspondence), then makes a targeted change \u2014 better initialization, annealing schedule, or exploiting the reference alignment for the yeast NC bar \u2014 and confirms the change helped.",
+        "10": "Runs a genuine improvement cycle: hypothesis about the bottleneck \u2192 targeted intervention \u2192 re-measure \u2192 keep/revert, escalating from cheap tweaks to algorithm swaps as evidence warrants, and abandons dead ends decisively while preserving best-known solutions."
+      },
+      "spine": true
+    },
+    {
+      "id": "compute_budget_tuning",
+      "name": "Optimizer compute-budget allocation",
+      "description": "Calibrating optimizer runtime/iterations/restarts against wall-clock so both thresholds are actually reached within available time.",
+      "why_it_matters": "Stochastic network aligners can run arbitrarily long; a HSapiens-scale search is expensive. Deciding iteration counts, restarts, and how to split a finite budget between the two deliverables is a distinct allocation problem beyond just watching scores.",
+      "importance": 6,
+      "target_level": 6,
+      "anchors": {
+        "0": "No regard for runtime; either a single under-powered run or an unbounded run that never returns a usable result.",
+        "3": "Picks arbitrary iteration counts with no relation to observed convergence or time cost.",
+        "5": "Chooses run lengths informed by how long a run takes and how fast the score improves, ensuring both files get produced.",
+        "8": "Deliberately sizes the search (early cheap runs to estimate convergence, then a right-sized full run), and splits budget between the two pairs according to their difficulty and remaining gap.",
+        "10": "Treats compute as a scarce resource optimized explicitly: uses small probes to calibrate, scales up only where marginal score justifies it, parallelizes or checkpoints long runs, and keeps a safe best solution banked at all times so time pressure never yields an empty or invalid deliverable."
+      },
+      "spine": false
+    }
+  ]
+}

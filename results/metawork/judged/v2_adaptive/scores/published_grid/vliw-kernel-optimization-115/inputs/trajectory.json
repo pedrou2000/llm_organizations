@@ -1,0 +1,872 @@
+[step 2] Bash: ls /app/
+    Analysis: Starting fresh. Need to explore the problem files first.
+Plan: Look at problem.py, kernel.py, and tests to understand the architecture.
+[step 2] Bash: cat /app/run_tests.sh
+    Analysis: Starting fresh. Need to explore the problem files first.
+Plan: Look at problem.py, kernel.py, and tests to understand the architecture.
+[step 3] Bash: cat /app/problem.py
+    Analysis: Need to look at the problem and kernel files.
+Plan: Read problem.py and kernel.py to understand the architecture.
+[step 4] Bash: wc -l /app/problem.py /app/kernel.py /app/tests/submission_tests.py
+    Analysis: Need to see more of problem.py (the simulator part) and kernel.py.
+Plan: View kernel.py and the middle of problem.py.
+[step 4] Bash: cat /app/kernel.py
+    Analysis: Need to see more of problem.py (the simulator part) and kernel.py.
+Plan: View kernel.py and the middle of problem.py.
+[step 5] Bash: sed -n '200,400p' /app/problem.py
+    Analysis: Need to see the simulator details (middle of problem.py).
+Plan: View problem.py from line 200 to about 565 to understand ISA.
+[step 6] Bash: sed -n '170,210p' /app/problem.py
+    Analysis: I have a good understanding now. Let me check the rest of problem.py and the submission tests.
+Plan: View the run loop and tests.
+[step 6] Bash: cat /app/tests/submission_tests.py
+    Analysis: I have a good understanding now. Let me check the rest of problem.py and the submission tests.
+Plan: View the run loop and tests.
+[step 7] Bash: grep -n 'load\|gather\|scatter\|mem_write\|mem\[' /app/problem.py | head -50
+    Analysis: Now I fully understand the problem.
+
+Problem: Tree-walk hash. For each round (16) and batch element (256):
+- Read idx, val, node_val = forest[idx]
+- val = myhash(val ^ node_val), 6 stages of hash
+- idx = 2*idx + (1 if val even else 2); wrap to 0 if >= n_nodes
+- Store back
+
+There's a sequential dependency: idx -> node_val (lookup) -> val -> next_idx, so a single batch element's chain is sequential round-to-round. But across batch elements (256), there's complete independence. Within a s
+[step 8] Bash: cp /app/kernel.py /app/kernel.py.bak
+    Analysis: OK so loads truly are 2 per cycle. Let me think again. 
+
+Key constraint: 256*16 = 4096 tree node reads. Load = 2/cycle. Floor = 2048 cycles. Target = 1250.
+
+BUT: We can KEEP the tree NODE VALUES we've loaded from mem in SCRATCH. The issue isn't keeping them, it's the GATHER (varying indices). However, scratch DOES support indexed read via load_offset? Let me check. No, load_offset reads from MEM, not scratch.
+
+Wait wait wait. Let me re-read load_offset:
+```
+case ("load_offset", dest, a
+[step 9] Bash: cat > /tmp/test_kernel.py << 'PYEOF'
+    Analysis: Let me write a clean vectorized kernel first, then iterate. I'll skip debug instrs (they don't count), keep state in scratch, vector-load initial values, gather nodes via load_offset, vector hash. Aiming for ≤2048 first.
+Plan: Write the kernel with vectorized approach. I need a `build` method that packs slots into VLIW bundles. Then iterate.
+[step 10] Bash: cat > /app/kernel.py << 'KEOF'
+    Analysis: Let me write the new kernel.py. I'll start with a vectorized version. 
+
+Key design:
+- 256 batch / VLEN=8 = 32 vector groups
+- Allocate scratch arrays of size 256 for: idx, val, tmp1, tmp2, addr (or reuse)
+- Allocate 8-element scratch for constants
+- Load initial vals via vload (32 vloads)
+- For each round:
+  - For each vector group g of 32:
+    - addr_vec = forest_values_p + idx_vec (valu add with broadcast scalar)
+    - 8 load_offset to gather node_val into nodevec
+    - val ^= node_v
+[step 11] Bash: shell
+    Analysis: The heredoc is still processing. Let me wait and continue.
+Plan: Wait for heredoc to complete.
+[step 12] Bash: bash /app/run_tests.sh 2>&1 | tail -60
+    Analysis: Kernel written. Now run the tests to see if it works and what cycles we get.
+Plan: Run the tests.
+[step 13] Bash: shell
+    Analysis: Still running. Wait more.
+Plan: Wait.
+[step 14] Bash: shell
+    Analysis: The build may be slow due to O(n^2) dependency analysis with thousands of ops. Let me wait more.
+Plan: Continue waiting.
+[step 15] Bash: python3 -c "
+    Analysis: Failed correctness. Issue: my emit_scheduled has a bug — when iteration `c < len(bundles)` reaches len without placement, it appends a new bundle. But also, my dependency analysis is fine but the issue might be that my scheduler ALLOCATES slots out-of-order which could break ordering since at each cycle effects happen at end. Actually wait - within a single cycle, all ops run with old scratch values, so RAW within a cycle is wrong. My scheduler ensures min_cycle = pred.cycle + 1 which 
+[step 16] Bash: grep -n 'emit_scheduled\|_conflict' /app/kernel.py
+    Analysis: Now let me also speed up the build (the dep analysis is O(n^2) and with thousands of ops it's slow). Let me also pre-flight test before running full tests.
+Plan: Speed up the scheduler so testing is fast, then run.
+[step 17] Bash: python3 << 'EOF'
+    Analysis: The scheduler is O(n^2) which is too slow for ~30k+ ops. Let me rewrite to use a more efficient scheduler based on tracking last writer/readers per address. Then run tests.
+
+With 16 rounds × 32 groups × ~28 ops = ~14k ops, n^2 is 200M ops, slow but ran in 169s last time. Let me make it faster.
+
+Actually, let me also fundamentally reconsider this approach. The current design schedules a giant list. Instead, we can build manually with much tighter packing.
+
+Anyway let me first make sure 
+[step 18] Bash: bash /app/run_tests.sh 2>&1 | tail -50
+    Analysis: Now run tests.
+Plan: Run tests.
+[step 19] Bash: cat /app/kernel.py | grep -n 'multiply_add\|HASH_STAGES\|hash_consts' | head -20
+    Analysis: Excellent! 2282 cycles, beats 50x. Need to get under 1250 (which is between 75x and 100x thresholds — actually <1500 for 100x and <1250 the task target).
+
+Current bottleneck: 2282 ≈ 16 rounds × 142 cycles/round. Per round: 32 vector groups × ~28 ops ≈ 896 ops. Distribution:
+- Loads: 32 vectors × 8 loads = 256 / 2 slots = 128 cycles  
+- Vselect (flow): 32 / 1 = 32 cycles
+- valu: ~22 ops × 32 = 704 / 6 = ~117 cycles  
+
+Max ≈ 128 cycles/round. ×16 = 2048 + initial setup overhead.
+
+To get 
+[step 20] Bash: cat > /app/kernel.py << 'KEOF'
+    Analysis: Let me revamp the kernel substantially: use multiply_add for combinable stages, replace vselect wrap with arithmetic, and aggressively reuse registers. Let me rewrite the kernel.py from scratch with these optimizations.
+Plan: Rewrite kernel with multiply_add, arithmetic wrap, careful register reuse.
+[step 21] Bash: bash /app/run_tests.sh 2>&1 | tail -40
+    Analysis: Run tests.
+Plan: Run tests.
+[step 22] Bash: python3 << 'EOF'
+    Analysis: 2191 cycles. Down from 2282. Both correctness passes. The bottleneck is loads — 4096 loads / 2 slots = 2048 cycles minimum.
+
+To go below 1250, must reduce load count drastically. Strategies:
+
+1. Cache tree in scratch. Tree is 2047 ints. Scratch is 1536. Tight.
+
+2. Note: we don't NEED idx_arr (256 words). At end of round, we have idx, but we use it next round only to look up tree. We could fold idx into addr_arr (since addr = forest + idx). After we compute idx, we precompute addr for n
+[step 23] Bash: cat > /app/kernel.py << 'KEOF'
+    Analysis: Stats:
+- 4218 load ops (mostly 4096 gather + setup) / 2 slots = 2109 min cycles → matches load bound
+- 10257 valu / 6 = 1710 min
+- Loads are the bottleneck.
+
+To break load bound, need to dedup. Let me focus on:
+1. Round 0 dedup: idx=0 known. Just 1 load instead of 2048.
+2. Round 10: skip computing next idx, set idx_arr=0 unconditionally.
+3. Round 11 first: idx=0 known. Just 1 load.
+4. For rounds 1, 2, 3: dedup with vselect tree (only 2,4,8 unique loads + small vselect tree).
+5. Round 1
+[step 24] Bash: shell
+    Analysis: The heredoc is taking time. Let me wait for it to finish.
+Plan: Wait for completion.
+[step 25] Bash: bash /app/run_tests.sh 2>&1 | tail -40
+    Analysis: Done. Let me run.
+Plan: Run tests.
+[step 26] Bash: python3 << 'EOF'
+    Analysis: Down to 2033. Correctness passes. Now I need to add the dedup approach for rounds 1-3 and 12-14, which should drop us further. Let me also add it for round k=4 (16 unique candidates), see if that helps.
+
+Let me also look at engine usage now to understand what's bottleneck.
+Plan: Check engine usage in current build.
+[step 27] Bash: wc -l /app/kernel.py
+    Analysis: Now load: 3676 ops / 2 = 1838 minimum. Valu: 1491. Total cycles 2033 — very close to load bound, scheduler near-optimal.
+
+To break load bound:
+- Round 11 also is idx-known-zero. Already handled.
+- Now I need to dedup rounds 1, 2, 3 and 12, 13, 14 with vselect tree.
+
+For those rounds, depth k means 2^k tree nodes to consider. Plan:
+- Pre-cache the level k nodes (2^k contiguous) into a scratch slab.
+- For each batch element, pick from the slab using bits of (idx - 2^k +1) via vselect tre
+[step 28] Bash: python3 << 'PYEOF'
+    Analysis: Let me make targeted edits with python. First, improve next_idx_ops to use 3 ops instead of 4.
+Plan: Edit next_idx_ops to use 3 ops, and add dedup for rounds 1-3 with vselect tree.
+[step 29] Bash: bash /app/run_tests.sh 2>&1 | tail -20
+    Analysis: Now run tests.
+Plan: Test.
+[step 30] Bash: wc -l /app/kernel.py
+    Analysis: 2029, slight improvement from 2033. Mostly the load is the bottleneck. Let me now add the dedup optimization for rounds 1, 2, 3 (and 12, 13, 14).
+
+Let me design the dedup carefully. For round k (where k ∈ 1, 2, 3), 12, 13, 14:
+- 2^k unique tree nodes at depth k.
+- vload tree[level_start..level_start+8] (1 vload, since 2^k ≤ 8 for k≤3).
+  - Actually for k=3, 8 nodes exactly. For k<3, level has 2,4 nodes; we vload 8 but only first 2^k are valid.
+- Now we have `level_buf` containing tree[
+[step 31] Bash: grep -n 'is_known_zero\|Direct gather\|XOR each val\|Hash and next' /app/kernel.py
+    Analysis: Let me view the current main loop section and then rewrite for dedup.
+Plan: Edit the kernel to add dedup branch.
+[step 32] Bash: python3 << 'PYEOF'
+    Analysis: Let me replace the round handling to add dedup for k=1,2,3. I'll add `dedup_depth` cases.
+Plan: Use python to insert a dedup branch.
+[step 33] Bash: cat > /app/kernel.py << 'KEOF'
+    Analysis: I made the depth in (1,2,3) branch too complex with placeholder. Let me simplify and write the actual implementation. Let me take a different approach: rewrite the kernel from scratch with clear structure.
+
+Actually let me take a step back. The current code has a placeholder for dedup that doesn't actually do the work. Let me reset and write the kernel properly with all optimizations as a clean rewrite.
+Plan: Write a clean kernel.py from scratch with proper dedup.
+[step 34] Bash: python3 << 'PYEOF'
+    Analysis: I made the dedup branch contain placeholder code that doesn't actually emit selects. I need to redo the dedup branch — the code currently has `pass` and breaks. The result will be incorrect for rounds 1, 2, 3. Let me rewrite the dedup branch cleanly.
+
+Let me make the dedup actually work using flow vselect. Plan for one group at depth k:
+1. Compute local_idx = idx - level_start (1 valu)
+2. For step in range(k):
+   - cond_v = local_idx & (1 << step) (1 valu - shared cond storage)
+   - Ha
+[step 35] Bash: bash /app/run_tests.sh 2>&1 | tail -20
+    Analysis: Run tests.
+Plan: Test.
+[step 36] Bash: python3 << 'PYEOF'
+    Analysis: Out of scratch! I added ws=128 plus bit_masks[i] for i in range(forest_height+1)=11 vectors at VLEN=8 = 88 words. Total 128+88 = 216 extra. Let me reduce ws size and limit bit_masks to needed depths.
+
+5 arrays × 256 = 1280, plus 7 header + ws 128 + scratch_tmp 16 + bit_masks 11×8=88 + other consts = 1280+7+128+16+88+~30 = ~1549. Over.
+
+Let me reduce ws to just what we need (max 8 vbroadcasts × VLEN = 64 words). And only allocate bit_masks we need (depth 1, 2 → bits 0, 1, plus maybe 2 f
+[step 37] Bash: bash /app/run_tests.sh 2>&1 | tail -25
+    Analysis: Run tests.
+Plan: Test.
+[step 38] Bash: python3 << 'PYEOF'
+    Analysis: Still out by 1 word. Let me check actual usage.
+Plan: Eliminate addr_arr — replace with smaller usage. Or reduce one of tmp1/tmp2 since most direct gather rounds don't need both for hash + addr concurrently.
+
+Wait — hash uses tmp1_v and tmp2_v simultaneously. And gather uses tmp1_v for node_val and addr_v for addresses. So tmp2_v could be reused as addr_v if not at hash time. Let me overlap addr_arr with tmp2_arr (alias).
+[step 39] Bash: python3 << 'PYEOF'
+    Analysis: But aliasing addr_arr with tmp2_arr means hash will use tmp2_v which conflicts with what gather uses (was addr_v). The scheduler will treat them as conflicts. Actually wait — gather happens BEFORE hash, and we're aliased so gather writes tmp2_arr (as addr_v) and hash also writes tmp2_v. That's fine as long as scheduler sees the deps.
+
+But there's an issue: gather writes addr_v via valu, then load_offsets read addr_v. Then hash's first op writes tmp1_v reads val_v. Then hash later write
+[step 40] Bash: python3 << 'PYEOF'
+    Analysis: After header(7) + 5×256(1280) + ws(32) + scratch_tmp(16) + 4 vectors(32) = 1367. Then we add hash consts (3 mad × 2 vecs × 8 + 3 full × 2 vecs × 8 = 96), then bit_masks (3×8=24), plus several other vbcasts (level_start_vec for each depth). Let me eliminate addr_arr. The dedup branch needs a 'cond_1' separate from cond_0. We can solve it by using val_v as cond_1 storage temporarily — but we need val.
+
+Actually, the easiest fix: alias addr_arr with idx_arr+8 offsets — no wait. Or, kill a
+[step 41] Bash: bash /app/run_tests.sh 2>&1 | tail -20
+    Analysis: Now let's run.
+Plan: Test.
+[step 42] Bash: python3 << 'PYEOF'
+    Analysis: Index out of range — load_offset reads scratch[addr+offset] which is invalid (or its content is invalid). This means addr_v at some position is outside mem. Likely, addr_v alias problem: in direct gather we use addr_v=tmp2_v alias. But hash also writes tmp2_v during the same per-group code stream. The scheduler should serialize... Let me check.
+
+Actually maybe the issue is that hash output has been moved into tmp2 from a previous round's gather phase, but then the new round's gather st
+[step 43] Bash: bash /app/run_tests.sh 2>&1 | tail -25
+    Analysis: Test now.
+Plan: Test.
+[step 44] Bash: python3 << 'PYEOF'
+    Analysis: Still failing. Probably the addr_arr=tmp2_arr alias creates issues elsewhere. Let me check — in direct gather, addr_v is alias of tmp2_v. Hash uses tmp2_v as well. Let me look at the order:
+
+Gather:
+1. addr_v (= tmp2_v) = idx_v + forest_p [valu]
+2. load_offset(tmp1_v, addr_v, i) for i in VLEN [load — reads addr_v, writes tmp1_v]
+3. val_v ^= tmp1_v [valu]
+
+Then hash:
+4. Stage 1 (mad): val_v = val_v * c1 + K1 [valu, writes val_v]
+5. Stage 2 (full): tmp1_v = val ^ K2; tmp2_v = val >> 19; 
+[step 45] Bash: python3 << 'PYEOF'
+    Analysis: Without dedup branches, 2032 cycles - close to before. Correct. So the alias of addr_arr=tmp2_arr is OK in direct gather mode. The bug is in the dedup branches.
+
+Let me re-enable dedup and debug. First, just enable depth==1.
+Plan: Enable only depth=1 dedup first.
+[step 46] Bash: python3 << 'PYEOF'
+    Analysis: 1968 cycles, passed 75x! Now enable depth=2.
+Plan: Enable depth=2 dedup.
+[step 47] Bash: python3 << 'PYEOF'
+    Analysis: Depth=2 fails. Let me look at depth=2 code carefully. The issue is likely: in the depth=2 dedup branch, the code computes `local_idx = idx_v - level_start_vec`, and the operations involve `level_start_vec` which is a vbroadcast vector. I create `level_start_vec = self.vbcast(level_start)` INSIDE the elif branch. But that's incurred for EVERY round at depth=2 — fine.
+
+Looking again at the code...
+
+Actually the issue may be that idx_v has values that are out of range as ADDRESSES. Let me
+[step 48] Bash: python3 -c "
+    Analysis: Down to 1924, correct. 75x passes. Need to break 1500 (100x), aim for <1250.
+
+Let me see usage now:
+Plan: Check engine usage.
+[step 49] Bash: echo currently at 1924
+    Analysis: Now valu is bottleneck at 1462 cycles minimum. Loads 1329. Total 1924 — there's still gap above min. 
+
+Valu = 8769 ops. Hash dominates (12 ops × 32 groups × 16 rounds = 6144). Plus xor with node_val (~30 × 16 = 512), wrap (3 ops × 32 × 14 = 1344), etc.
+
+To reduce: we need to cut hash ops or other valu work.
+
+Let me try multiplication-add-friendly fusing for non-mad stages. Also, let me see if we can save on something else. 
+
+WAIT: can we reduce valu work for the per-round wrap (next_id
+[step 50] Bash: python3 << 'PYEOF'
+    Analysis: Let me first try improving the scheduler. The current scheduler is simple list scheduler. Let me try a smarter one that uses critical path information. Or just try different orderings.
+
+Actually before that, let me see what we'd save if loads were ALSO reduced. The current direct gather rounds (4-10, 15) account for the bulk. Can I dedup any of them?
+
+For round 15 (depth 4 → 16 unique nodes): direct gather 256 loads = 128 cycles. Or vload+select tree.
+  vloads: 16/16 = 1 cycle (2 vload
+[step 51] Bash: grep -n 'for r in range(rounds):' /app/kernel.py
+    Analysis: I didn't actually change the scheduler logic, just added local var caching. Let me think differently.
+
+Let me try emitting in GROUP-MAJOR order, since this would create longer dependency chains in source order, allowing the scheduler more flexibility.
+Plan: Emit all rounds for a group, then next group. This creates parallelism opportunities.
+[step 52] Bash: python3 << 'PYEOF'
+    Analysis: Let me check the schedule efficiency by simulating with simple test. Actually since changing emit order is complex, let me focus on directly reducing valu work.
+
+Key ideas to try:
+1. Use multiply_add for next_idx in a smarter way (e.g., precompute (val&1)+1 across multiple groups).
+2. Reduce load count more by adding depth=3 dedup with mad-tree.
+
+Actually simplest big win: The next_idx_ops takes 3 valu ops × 32 groups × 14 rounds = 1344 ops. If reduced to 2 ops, save 448 ops = 75 valu 
+[step 53] Bash: grep -n 'Hash and next idx\|# Direct gather' /app/kernel.py
+    Analysis: Interesting! 
+- VALU: 4.56 ops/cycle avg out of 6 max. Only 667 cycles at 100%. So scheduler isn't packing valu fully.
+- LOAD: 1.38 ops/cycle avg out of 2 max. Only 1296 of 1924 cycles at full.
+- FLOW: 258 cycles fully used (1 slot/cycle).
+
+The valu deficit: 8769 ops at 6/cycle would take 1462 cycles. We're at 1924 which is 4.56 ops/cycle on average over all cycles.
+
+This suggests the scheduler has gaps in valu — likely because many cycles have load/flow only without valu fill.
+
+The gr
+[step 54] Bash: sed -n '245,310p' /app/kernel.py
+    Analysis: Let me restructure to interleave per-group. View around 270-290 (round main loop).
+Plan: Restructure with per-group emission for direct gather rounds. I'll put hash and next_idx inside the per-group loop for direct gather rounds.
+[step 55] Bash: python3 << 'PYEOF'
+    Analysis: Let me make a more impactful change. Move the per-group hash/next_idx loop INSIDE each round's structure so the scheduler sees gather → hash → next_idx for group g, then group g+1, providing better interleaving.
+
+Actually the order issue is: emit all gather (for all groups) first, then all hash. Better is to emit per-group end-to-end. Let me try.
+Plan: Restructure direct gather to emit per-group: gather, hash, next_idx all together for each group.
+[step 56] Bash: python3 << 'PYEOF'
+    Analysis: Let me restructure: combine gather+hash+next_idx into single per-group loop within each round, but only for direct gather rounds (since dedup already does setup once for whole round).
+
+Approach: emit per-group gather + hash + next_idx together. For known-zero rounds, do load+broadcast then per-group xor + hash + next_idx. For dedup rounds, do level setup, then per-group select + xor + hash + next_idx.
+
+Let me restructure the entire main loop.
+Plan: Restructure: for each round, after gl
+[step 57] Bash: bash /app/run_tests.sh 2>&1 | tail -25
+    Analysis: Run.
+Plan: Run tests.
+[step 58] Bash: python3 -c "
+    Analysis: 1892 cycles, slight improvement from 1924. Still need <1250 (target) or <1500 (100x).
+
+Let me check stats again:
+Plan: Check engine util.
+[step 59] Bash: python3 << 'PYEOF'
+    Analysis: 8641 valu, min cycles 1440. Total 1892 — gap 452. Schedule is leaving valu slots empty.
+
+Let me see avg valu per cycle:
+Plan: Check valu utilization per cycle and find why scheduler isn't packing better.
+[step 60] Bash: python3 << 'PYEOF'
+    Analysis: 672 cycles full (6 valu), 524 with 5, 269 with 4, 276 with 3. So we have many cycles with only 3-4 valu ops — gaps in valu packing.
+
+The issue: scheduler placing ops in source order means when there are dep chains, valu has gaps. 
+
+IDEA: Use a smarter scheduler that prioritizes ops with longer critical paths. List scheduling with priority by 'descendant count' or estimated remaining cycles.
+
+Actually let me take a step back. There's a more fundamental issue: my hash sequence creates RA
+[step 61] Bash: python3 << 'PYEOF'
+    Analysis: Worse — 2042. Priority scheduler not helping. The issue might be that with priority by critical path, it scheduled long-chain ops first but other ops got bunched up.
+
+Let me revert and think differently.
+
+Looking at distribution: 672 cycles full, 524 with 5, 269 with 4, 276 with 3, 31 with 2, 23 with 1, 97 with 0.
+
+The 0-valu cycles (97) are likely the LOAD/FLOW dominated cycles where valu has nothing ready (all dep-stalled).
+
+The issue is hash dependency chains: each hash stage has 2 
+[step 62] Bash: python3 << 'PYEOF'
+    Analysis: Back to 1892. Now to break 1500 (and ideally 1250) — let me think about reducing valu work.
+
+Valu = 8641. Major contributors:
+- Hash: 12 ops × 32 × 16 = 6144 (71%)
+- Wrap: ~3 × 32 × 14 = 1344 (16%)
+- Other: ~1100
+
+IDEAS:
+
+1. **Reduce hash 'full' stage from 3 to 2 ops?**
+   Stage 2: tmp1=val^K, tmp2=val>>s, val=tmp1^tmp2 = val^K^(val>>s).
+   Could we do: val = val ^ K ^ (val>>s) using a single multi-input XOR? No, valu is binary.
+
+   Could mad help? K is fixed. mad(d, a, b, c) = a*b+c. 
+[step 63] Bash: python3 << 'PYEOF'
+    Analysis: First 17 cycles are LOAD-only (header loads, scratch_consts) — setup. Last cycles are stores. So setup + finale account for ~30 cycles of zero-valu.
+
+The 32 'middle' zero-valu cycles spread throughout — likely RAW gaps.
+
+Main optimization: reduce the SETUP cycles by issuing const loads in PARALLEL with valu broadcasts. Currently they're serial.
+
+Also, the stores at end serialize after all valu. We could potentially OVERLAP stores with the last round's valu work.
+
+Actually the stores ar
+[step 64] Bash: grep -n '# Load header values\|scratch_const\|self.add(' /app/kernel.py | head -20
+    Analysis: 1876, slight improvement from 1892. Let me also reduce the SETUP cycles. Current first 17 cycles are load-only.
+
+The header loads serialize with const+load pattern. Let me inspect.
+Plan: Look at setup code, see if I can parallelize.
+[step 65] Bash: echo currently at 1876
+    Analysis: The setup uses `self.add()` which appends ONE bundle per op — so each load/valu setup op gets its own bundle. This is wasteful since multiple loads can be in same cycle (2 slots).
+
+Let me convert setup to use emit_scheduled too. But the issue is that `scratch_const` is called from many places, and each `self.add` appends individually.
+
+Let me batch the setup — collect all setup ops then emit_scheduled once.
+Plan: Refactor setup to use scheduled emission. Skip for now — focus on bigger 
+[step 66] Bash: python3 << 'PYEOF'
+    Analysis: Let me try implementing alu hybrid for next_idx_ops only — that's a small chunk. Actually let me instead try LIST scheduling with priority by descendants count.
+
+Actually let me re-examine: my `emit_scheduled` schedules ops in SOURCE ORDER. If I REVERSE the order or process by some priority, may help.
+
+Quick test: shuffle ops within each round and see if cycles change.
+
+Actually let me try a specific tweak: emit hash AFTER all gather across groups (current ordering). Or interleave diff
+[step 67] Bash: python3 << 'PYEOF'
+    Analysis: Index error. The issue: by separating gather from hash, the addr_v values may get overwritten by hash before all loads complete (since addr_v is alias of tmp2_v).
+
+Two-loop structure: first loop writes addr_v (= tmp2_v) and load_offsets, second loop runs hash which OVERWRITES tmp2_v during stage 2. With round-major order, scheduler sees that hash for group 0 depends on group 0's loads via tmp1_v, not tmp2_v — but hash WRITES tmp2_v.
+
+Wait but addr_v and tmp2_v have SAME ADDRESS (alias)
+[step 68] Bash: grep -n 'Direct gather' /app/kernel.py
+    Analysis: The replacement assertion succeeded but the test still fails. Let me check the kernel.py for issues.
+Plan: Diagnostic.
+[step 69] Bash: python3 -c "
+    Analysis: Looks reverted. Let me check why test still fails.
+Plan: Run test fresh.
+[step 70] Bash: sed -n '355,400p' /app/kernel.py
+    Analysis: There's still a load_offset out-of-range. Let me check the current kernel for what's happening.
+Plan: Look at current kernel structure.
+[step 71] Bash: sed -n '395,440p' /app/kernel.py
+    Analysis: There's a duplicated `if is_last_round` block — my replacements left a leftover. Let me view more.
+Plan: Look at full structure.
+[step 72] Bash: python3 << 'PYEOF'
+    Analysis: The new `if/elif/else` block was added, then there's a duplicated old block. Let me clean up.
+Plan: Remove the trailing duplicated block.
+[step 73] Bash: echo skipping for now, focus elsewhere
+    Analysis: 1876 again. Let me focus on reducing valu via mad-style next_idx fusion.
+
+IDEA: Combine bit+1 compute with mad in a tricky way. `mad(idx, 2, bit_plus_1)` where bit_plus_1 is computed via mad: `bit_plus_1 = mad(val, 1, 1) & 1` — no, & isn't part of mad.
+
+Wait — actually for `idx_next = 2*idx + 1 + (val & 1)`, we can write:
+`idx_next = (2*idx + 1) + (val & 1) = mad(idx, 2, ?_v)` where ?_v = 1 + (val & 1).
+
+Using mad(val, 1, 1_vec) won't work since we want val & 1, not val.
+
+WAIT: `(val &
+[step 74] Bash: python3 << 'PYEOF'
+    Analysis: Let me try the stage-major emission. I'll restructure hash_ops to operate on ALL groups instead of one at a time.
+Plan: Refactor to emit ops by stage-major order within rounds.
+[step 75] Bash: python3 -c "
+    Analysis: Same 1876 cycles. Stage-major didn't help. Let me check stats again.
+Plan: Check valu utilization.
+[step 76] Bash: python3 << 'PYEOF'
+    Analysis: Same stats. valu min 1440, total 1876. Gap 436.
+
+Looking at distribution:
+- 670 cycles full valu (6)
+- 527 cycles 5 valu 
+- 269 with 4, 275 with 3
+- 31 with 2, 23 with 1, 81 with 0
+
+So about 1100 cycles are NOT full valu. Total valu deficit = (6-avg)*1876 = (6 - 4.6)*1876 ≈ 2627 slots wasted.
+
+If we had no waste, we'd be at 8641/6 = 1440 cycles. 
+
+Valu RAW dependency chains create the bubbles. Each hash 'full' stage has 2-cycle chain (2 → 1 dep): that's where we lose.
+
+Let me try to re
+[step 77] Bash: python3 -c "
+    Analysis: 1805 cycles! Down from 1876. Better. But still need <1500.
+
+Let me check stats:
+Plan: Check.
+[step 78] Bash: python3 -c "
+    Analysis: Better valu utilization: 835 cycles full vs 670 before. Total 1805. Still 365 cycles slack. Can we further improve?
+
+Valu min = 1440. We're at 1805. Gap 365 cycles.
+
+Let me see if using a different priority helps. Let me try priority = priority * 1000 + something.
+
+Actually, the issue may be that my list scheduler doesn't reorder ready list well. With heap on (-priority, src_i, i), ties broken by src_i.
+
+Another thing: I'm advancing cycle by 1 each iteration, even if no progress. Shoul
+[step 79] Bash: python3 << 'PYEOF'
+    Analysis: First 17 cycles are load-only setup (header + scratch_const). That's setup overhead. Then between 18-46 we see scattered single-op cycles, suggesting setup phase still completing.
+
+Mid-program (700+) we see load=2 + valu=3-5. So loads are saturated (2/cycle), valu is partially used (avg 4.5).
+
+For 1805 cycles total:
+- Load-only setup: ~17 cycles
+- Final stores: ~10 cycles
+- Middle: ~1778 cycles where we mix loads and valu.
+
+True minimum: max(8641/6=1440, 2658/2=1329, ...) = 1440.
+
+We'r
+[step 80] Bash: python3 -c "
+    Analysis: 1798. Tiny improvement. The setup wasn't a bottleneck.
+
+Let me think about what's holding us back. valu min is 1440. We're at 1798 = 358 cycles slack.
+
+Let me think about the dep structure. Hash 'full' stages have 2-cycle critical path per group. With 32 groups, each can fit 6 ops/cycle, but a group's stage 2 needs:
+- cycle T: tmp1 = val^K, tmp2 = val>>s (2 valu ops) — these are independent given val.
+- cycle T+1: val = tmp1^tmp2 (1 valu op)
+
+Critical path 2 cycles. With 32 groups para
+[step 81] Bash: echo trying tie-break-reverse
+    Analysis: Last 10 cycles have only 0-4 valu — slack at the end. The very last cycles have just stores or flow with no valu. The fundamental issue: hash for groups dribbles in at varying times near the end, and stores can't all happen until valu finishes.
+
+Let me see if there's a smarter approach: process 2 batch elements per VLEN element via packing. If hash is bit-parallel 32-bit, can we do 2x16-bit? No, semantics force 32-bit.
+
+Let me look at one more idea. Instead of using `+` for the last ha
+[step 82] Bash: python3 -c "
+    Analysis: Let me try increasing batch parallelism by issuing rounds 0-1 of group 0 BEFORE round 0 of all other groups. The scheduler will see longer chains as higher priority, but ties matter.
+
+Actually, let me try a different tactic: emit rounds in OUTER loop, but groups in INNER loop, and INTERLEAVE round phases across groups.
+
+Hmm complex. Let me try simpler: write the kernel to emit groups across rounds as if each group is fully independent. This should let scheduler pipeline naturally.
+Plan
+[step 83] Bash: wc -l /app/kernel.py
+    Analysis: Let me try the alu hybrid approach. Take 24 elements (3 vector groups worth, 24 scalar elements), process them via alu. The other 232 elements (29 vector groups but 232 isn't multiple of 8... 224 = 28 groups + 32 scalar).
+
+Let me do 32 elements in alu (4 "groups" × 8 = 32 scalars), 224 in valu (28 vector groups).
+
+Predicted cycles:
+- Valu: 28 × 18 × 16 = 8064 valu ops / 6 = 1344 cycles min.
+- Alu: 32 × 19 × 16 = 9728 alu ops / 12 = 811 cycles min (where 19 = scalar per element).
+  Wait
+[step 84] Bash: cp /app/kernel.py /app/kernel.py.bak2
+    Analysis: Let me make a minimal modification: process the LAST 32 batch elements as scalars via alu, while keeping first 28 groups (224 elements) as vector. Each scalar element has its own state.
+
+First let me back up current kernel and write the alu scalar pipeline.
+Plan: Add alu scalar processing for 32 last elements. Reduce n_groups by 4 (28 groups) and add scalar pipeline.
+[step 85] Bash: python3 << 'PYEOF'
+    Analysis: Let me think about this more carefully. To implement alu hybrid:
+
+1. Reduce n_groups for valu processing: instead of all 256 elements, do 224 elements via valu (28 groups). The other 32 elements processed via alu.
+2. Allocate scalar arrays for the 32 alu elements: idx_s[32], val_s[32], etc.
+3. In each round: 
+   - For valu groups 0..27: existing path.
+   - For alu elements 0..31: scalar gather + xor + hash + next_idx.
+4. Initial val loading: vload for 28 groups + scalar loads for 32 el
+[step 86] Bash: python3 << 'PYEOF'
+    Analysis: Now I need to update the initial val loading and main loop to handle scalar elements. Let me update the initial val load.
+Plan: Update initial val loading and add scalar processing.
+[step 87] Bash: python3 << 'PYEOF'
+    Analysis: Now add scalar processing in the main loop, and update final stores. Let me add scalar processing as a parallel block within each round, after the valu work.
+Plan: Add scalar processing in main loop and update stores.
+[step 88] Bash: python3 << 'PYEOF'
+    Analysis: Now scalar emits AFTER vector — so they're sequential, not parallel. To run in parallel, scalar_ops should be PART of all_ops.
+
+Let me change to merge them into all_ops before scheduling.
+Plan: Merge scalar_ops into all_ops.
+[step 89] Bash: python3 -c "
+    Analysis: Out of scratch by 1. We're allocating 5 × n_alu (32) + 5 × n_valu (224) + ws + ... = 5*32 + 5*224 + 32 = 160 + 1120 + 32 = 1312. Plus header (7), constants, vec broadcasts (~50), bit_masks(24)... let me count.
+
+Let me check.
+Plan: Reduce scalar arrays.
+[step 90] Bash: python3 << 'PYEOF'
+    Analysis: Up to 1362, we have 1335 used + 24 (still 4 vec consts after two_vec, where assert fired). Let me count what's missing past two_vec: bit_masks (3 × 8 = 24), hash consts (lots), level_start_vec... 
+
+The scratch fits the arrays cleanly. Just need a tiny bit more. Let me reduce scalars to be even more compact: alias node_s with tmp_s? Actually let me also reduce ws (we need only 4 vecs for level_size up to 4 = depth 2).
+
+Wait, ws is 32 = 4 × 8 = 4 VLEN vectors, exact for depth 2. But for 
+[step 91] Bash: python3 -c "
+    Analysis: 1770 cycles. Down from 1798. Slight improvement (only 28 cycles). The alu hybrid is helping but not as much as expected. Let me check stats.
+Plan: Check engine usage with hybrid.
+[step 92] Bash: python3 << 'PYEOF'
+    Analysis: Now load is bottleneck: 2906 / 2 = 1453 cycles min. Valu now 1260 (we offloaded). Alu 890. 
+
+The load is bottleneck because scalar elements add 32 loads per round × 16 rounds = 512 extra loads. Plus more per scalar = 32 setup + ... = 2906 - 2658 = 248 extra loads.
+
+Load min 1453. Total cycles 1770 — gap 317.
+
+If I increase n_alu, I move more work from valu to alu but ADD MORE LOADS (since each alu element needs 1 load per round). So load gets worse.
+
+Optimum is balancing. Let me try LO
+[step 93] Bash: for n in 8 24 40 48; do
+    Analysis: 1735, better. Let me try other values.
+Plan: Try n_alu=24, 8.
+[step 94] Bash: for n in 16 20 24 28 32; do
+    Analysis: n_alu=24 gives 1724. 16 gave 1735. Let me try around 20.
+Plan: Try 20, 28.
+[step 95] Bash: sed -i 's/n_alu = .*  # number/n_alu = 24  # number/' /app/kernel.py
+    Analysis: n_alu=24 or 28 both 1724. Wait n_alu=20 must be n_alu=16 effectively (snap to VLEN). Let me check that snap.
+
+Looking at code: `n_alu = (n_alu // VLEN) * VLEN`. So 20 → 16, 28 → 24. So the actual n_alu values used are 8, 16, 24, 32, etc.
+
+24 gives 1724. 
+
+Let me see if I can further reduce. Note loads are bottleneck. Check stats with n_alu=24.
+Plan: Set n_alu=24, check stats.
+[step 96] Bash: python3 << 'PYEOF'
+    Analysis: load 1422 min, valu 1306, alu 669. Total 1724.
+
+Loads still bound at 1422. Need to reduce loads further. Maybe dedup more rounds for valu side, or reduce loads for alu side.
+
+ALU loads = 24 elements × 16 rounds = 384 individual loads (192 cycles). 
+
+WAIT — for ALU, EVERY round loads. We don't dedup for alu elements. We could dedup rounds 0, 1, 11, 12 etc. for alu too — but more complex.
+
+For scalar elements at known-zero rounds (0, 11): load tree[0] once and use directly. Skip 24 indiv
+[step 97] Bash: python3 << 'PYEOF'
+    Analysis: Incorrect. The issue: in known-zero rounds, I set `node_s = tree0_scalar_s` and use it in xor. But the xor needs to use tree0_scalar_s, which works. But for SUBSEQUENT operations, `node_s` might be reused (e.g., in stage 4 for load_offset → no actually scalar uses tmp_s, node_s for stage temps). Let me check.
+
+In the scalar hash, after xor we do hash stages. Stages use tmp_s and node_s as temps. In my code, for full hash stages:
+```
+tmp_s = val ^ K  (writes tmp_s)
+node_s = val >> s (wr
+[step 98] Bash: cp /app/kernel.py.bak2 /app/kernel.py
+    Analysis: Worse — 2048! The change made it slower due to scheduling. Let me check what happened.
+
+Actually at 2048, we may have failed test_75x. Looking at output it says failures=2.
+
+Let me revert and think — known-zero rounds happen twice (rounds 0, 11). For 24 scalar elements × 2 rounds = 48 loads saved. But my change added a `tree0_scalar_s` load that conflicts with valu's tree0 load.
+
+Let me verify by reverting just this change.
+Plan: Revert.
+[step 99] Bash: bash /app/run_tests.sh 2>&1 | tail -5
+    Analysis: I already restored from bak2 (which was before alu hybrid). Let me re-apply the alu hybrid changes carefully.
+
+Actually the bak2 was made BEFORE alu hybrid. Let me just rebuild from scratch — re-apply the alu hybrid (n_alu=24) without the known-zero scalar tree0 optimization.
+Plan: Re-apply alu hybrid only.
+[step 100] Bash: python3 << 'PYEOF'
+    Analysis: Back to 1798 (without alu hybrid). Let me re-apply alu hybrid step by step.
+Plan: Apply alu hybrid changes again.
+[step 101] Bash: for n in 16 24 32 40 48 56 64; do
+    Analysis: 1724 cycles, correctness OK. Now let me try larger n_alu values and see.
+Plan: Try various n_alu.
+[step 102] Bash: sed -i 's/n_alu = .*  # number/n_alu = 24  # number/' /app/kernel.py
+    Analysis: Best n_alu=24 with 1724. The alu adds loads which become bottleneck. Let me also try setting n_alu so loads stay below valu min.
+
+Valu min currently ~1305 cycles (from earlier stats with n_alu=24). With more alu offload, valu min drops but load grows.
+
+Trick: reduce LOADS for scalar elements. Each scalar element does 1 load per round. 
+- Round 0, 11 (idx=0 known): can skip individual load.
+- Other rounds: needs load.
+
+For 24 scalars × 16 rounds = 384 loads. Save 24 × 2 = 48 by skipping
+[step 103] Bash: python3 << 'PYEOF'
+    Analysis: 1727, slightly worse than 1724. Due to the conflict on tree0_scalar_s being a single-element shared, ALL 24 scalar XORs depend on it. Let me check stats.
+
+Actually the issue is that 24 scalars are doing XOR of the same source (tree0_scalar_s). They serialize because of write-AFTER-write — wait no, they all READ tree0_scalar_s and WRITE val_s[i]. No write conflict on tree0. They can run in parallel.
+
+But maybe the dep on tree0_scalar_s being written once causes 24 reads waiting for writ
+[step 104] Bash: python3 -c "
+    Analysis: Back to 1724. 
+
+Let me think about further optimizations:
+1. Loads still bottleneck. Reduce loads via more dedup on valu side.
+2. The 9 direct gather rounds × 28 groups × 8 loads = 2016 loads + 24 scalars × non-known-zero rounds = 24 × 14 = 336 = 2352 loads + others.
+
+Actually let me recompute. n_alu=24, n_valu=232, n_groups=29.
+- valu direct gather: rounds 3-10, 14, 15 → 9 rounds × 29 × 8 = 2088 loads
+- valu dedup setup: ~10
+- valu known-zero: 2 loads
+- scalar: 24 × 16 rounds = 384 lo
+[step 105] Bash: echo current state at 1724
+    Analysis: load 1422 cycles min. Total 1724. Gap 302 cycles.
+
+Now valu min is 1306. If I can reduce loads to ~1306, valu becomes bound. Then to push <1250, I need to reduce both.
+
+Load: 2844. Reducing by ~232 brings to 1306 cycles. That's 116 fewer loads.
+
+Where from?
+- Scalar known-zero rounds save 24 × 2 - 2 = 46 loads (subtract 2 since we add 1 load shared per round).
+- Other...
+
+Actually the previous attempt at scalar known-zero gave 1727 not 1724 — slightly worse. Why?
+
+Possibly because the 
+[step 106] Bash: python3 -c "
+    Analysis: Let me think carefully about depth=4 dedup. We need 16 vbroadcasts (16×8 = 128 scratch words for level vecs), per-group select tree of 4 levels (15 selects), and per-group state tracking.
+
+ws is currently 32 words. Need 128. We'd need to expand significantly. But scratch is tight.
+
+Actually we might not need all 16 vbroadcasts. We could use vselect with offsets — actually the simplest is vbroadcast each candidate.
+
+16 × VLEN = 128 words. Plus 4 cond vectors? Per-group cond needs (depth
+[step 107] Bash: python3 -c "
+    Analysis: 1530 used out of 1536. Only 6 words free. Tight!
+
+Here's an idea: ws is 32 words. For depth=2 dedup we need only 4 VLEN-vecs = 32 words. For depth=4, we'd need 16 VLEN-vecs = 128 — way too much.
+
+Let me see if I can shrink something else. The valu arrays at 232 each are 5 × 232 = 1160. 
+
+- idx_arr: needed
+- val_arr: needed  
+- tmp1_arr, tmp2_arr: needed for hash
+- inter_arr: needed for depth=2 dedup. Could be smaller — only used for 1 vec slot per group = 232 words.
+
+Actually wait, int
+[step 108] Bash: echo current at 1724 - let me try different things
+    Analysis: 1530 used. Past two_vec (1338+8=1346), the rest goes to anonymous: bit_masks (3*8=24), hash_consts vector broadcasts (3 mad × 2 vecs × 8 = 48, 3 full × 2 × 8 = 48 = 96 total), and scratch_const scalars (lots).
+
+1346 + 24 + 96 = 1466. Plus scalar consts = ~64 = 1530. Roughly matches.
+
+Let me check if we have scratch room with n_alu=16. We'd save 32 words. New total ~1498. 
+
+Hmm. We still have ~38 words free. Could expand inter_arr to be ALIAS with idx_arr's later region (but idx_arr is 
+[step 109] Bash: python3 << 'PYEOF'
+    Analysis: Let me change the order: instead of emitting all valu rounds then all scalar rounds, emit per-round both. This way scheduler has both types ready.
+Plan: Restructure to emit both valu and scalar each round.
+[step 110] Bash: sed -n '525,605p' /app/kernel.py
+    Analysis: The structure has main valu loop at line 334, scalar at 540 with own r loop, then emit at 604.
+
+Let me actually make a smarter attempt: COMBINE the two loops, both running r in 0..rounds in a single loop. Both valu and alu work per round. This way the scheduler sees BOTH types of ops per round, and can pipeline alu and valu in parallel.
+
+Let me rewrite to do this.
+Plan: Inline scalar work into main round loop.
+[step 111] Bash: python3 << 'PYEOF'
+    Analysis: Let me take a different approach: I'll move the scalar block setup constants outside, and then inline the per-round scalar processing into the main valu round loop.
+Plan: Move scalar processing into main round loop.
+[step 112] Bash: cp /app/kernel.py.bak2 /app/kernel.py
+    Analysis: I inserted scalar code into wrong for-r loop. There were TWO `for r in range(rounds):` — one for depth_at_start setup (around line 282), and the main one (around 334). I picked the wrong one.
+
+Let me undo and try again, picking correctly.
+Plan: Restore from bak2 (which was alu hybrid attempt) and start over. Wait, bak2 is BEFORE alu hybrid. Let me restart current kernel.
+[step 113] Bash: python3 << 'PYEOF'
+    Analysis: Reset to 1798 (no alu hybrid). Let me re-apply alu hybrid with INLINE scalar processing inside the main round loop.
+Plan: Apply alu hybrid with inline scalar.
+[step 114] Bash: grep -n 'for r in range(rounds):\|self.emit_scheduled(all_ops)\|all_ops = \[\]' /app/kernel.py
+    Analysis: Now insert scalar per-round inside main for-r loop. Let me find the right location.
+Plan: Find the main for-r loop's last op (just before loop end) and inject scalar processing.
+[step 115] Bash: sed -n '520,545p' /app/kernel.py
+    Analysis: Main for-r is at line 346. Loop body ends before line 538 (emit). I want to add scalar work at end of each iter, just before the dispatch is finished. Let me find the indentation pattern.
+
+Actually, the round body has a structure with `if/elif/else` and the per-group loops. The per-round body is everything indented at level 12 (inside for-r). Let me add scalar work at the END of each iter.
+
+The simplest is: after the for-r body (last line indented at 12+), add scalar work indented at 1
+[step 116] Bash: python3 << 'PYEOF'
+    Analysis: Empty line at 538 ends the for-r body. Let me insert scalar per-round work right before line 538 (which is `        self.emit_scheduled(all_ops)`).
+
+Wait the empty line at line 537 (the blank line). The `self.emit_scheduled(all_ops)` is at line 538. Body ends after the last per-group loop. Need to add scalar work INSIDE the for-r at the end.
+
+Looking at indents: `for r in range(rounds):` is at indent 8. Body is at indent 12. The last code at indent 12+ ends at line 536 (`next_idx_ops(.
+[step 117] Bash: python3 -c "
+    Analysis: Same 1724 with inlined scalar processing. Apparently the scheduler handles the appending order well either way.
+
+Let me check distribution to understand what's bottleneck.
+Plan: Check distribution.
+[step 118] Bash: python3 -c "
+    Analysis: Loads 1422 cycles min (2 saturated 1385 cycles, 1-load 74, 0 load 265). Loads are bottleneck.
+
+ALU: 621 cycles fully utilized (12 ops). 978 cycles with 0 alu. Lots of room.
+
+Valu: 756 full (6 ops). Plus 348@5, 198@4, 201@3, etc.
+
+Key: Loads are bottleneck at 1422. To break, must reduce loads by ~170 to bring it to valu's 1305 (then valu becomes bottleneck).
+
+Loads:
+- VALU direct gather rounds (3-10, 14, 15): 9 rounds × 29 groups × 8 = 2088 loads
+- VALU dedup (1, 2, 12, 13): minor (~10 
+[step 119] Bash: echo current 1724, exploring options
+    Analysis: 82 const slots! That's 82 const-load ops, each takes 1 load slot. 
+
+Many are offsets like 8, 16, 24, ... 240, 248 (32 offsets for 32 groups × 2 — for inp_indices_p and inp_values_p). Also indices 0-7 for header. Plus hash constants: 6 vector consts + 6 K consts + scalar versions.
+
+If I could use ALU to compute offsets at runtime, I save load slots. ALU has 12 slots/cycle, plenty available.
+
+Offsets like g*8 = sequential. We could compute via cumulative add.
+
+For scalar element loads (i
+[step 120] Bash: grep -n 'tree0_scalar\|known_zero' /app/kernel.py | head -20
+    Analysis: Let me think about scrap further. Currently 1724. 
+
+One thing I haven't explored: what if I REDUCE addr computation by precomputing addr_arr ONCE at start of round? Hmm already done.
+
+Another idea: What if I REORDER so that the scheduler sees alu ops earlier? Currently scalars are at end of each round (per the inline placement).
+
+Actually the alu chains span 16 rounds for each scalar element. That's a HUGE chain. The scheduler might struggle to pipeline.
+
+With 24 scalar elements runnin
+[step 121] Bash: python3 << 'PYEOF'
+    Analysis: tree0_scalar is at scratch_tmp+14. Now I need to make scalar processing reuse this when is_known_zero is true. Let me inject this carefully.
+Plan: Add known_zero branch in scalar processing.
+[step 122] Bash: python3 << 'PYEOF'
+    Analysis: 1727, slightly worse than 1724. Hmm. The shared tree0_scalar creates a serialization point — 24 alu ops all reading tree0_scalar, but they have to wait for the load to complete first. Then 24 reads can run, but the load is now scheduled to complete EARLIER than 24 individual loads.
+
+Let me revert and try a different optimization.
+Plan: Revert.
+[step 123] Bash: bash /app/run_tests.sh 2>&1
+    Analysis: Back to 1724. Given the difficulty of further optimization and time spent, let me commit to this and verify all tests pass.
+
+Current state: 1724 cycles (passes 75x), fails 100x and the task target <1250.
+
+Let me see the test output:
+Plan: View test output.
+[step 124] Bash: echo current 1724, attempting depth=3 mad dedup
+    Analysis: We pass 75x, fail 100x. Task requires <1250 strictly. We're at 1724.
+
+Let me think about other optimizations. Loads are bottleneck.
+
+Idea: Use BOTH valu addr_v compute AND alu addr_s compute INTERLEAVED so loads aren't bunched. Actually current load profile shows 1385 cycles at 2 loads, 74 at 1 — pretty saturated.
+
+The issue is load count itself. Let me see if scalars can do dedup.
+
+For scalar elements at depth 1, 2, 3 dedup rounds, instead of individual loads, we could share with valu
+[step 125] Bash: python3 -c "
+    Analysis: First, expand ws to 64. Currently scratch is at 1530 with n_alu=24. Adding 32 more (ws 32→64) puts us at 1562 — over.
+
+Need to free ~30 words. Options:
+- Reduce n_alu to 16: free 8 × 4 = 32 words. Total: 1530 - 32 = 1498. Then add 32 to ws → 1530. Tight but may fit.
+- Or reduce some other arrays.
+
+Actually wait: the bit_masks dictionary uses 3 vec consts = 24 words but only 2 are used (depth 1 and 2). Could reduce to 2 saving 8 words.
+
+Actually the more I think, the more this implement
+[step 126] Bash: sed -i 's/n_alu = .*$/n_alu = 32/' /app/kernel.py
+    Analysis: We're tight at 1530/1536. Given the time invested, let me commit to current solution and verify all tests pass.
+
+Let me do one last attempt: increase n_alu to 32 but keep current optimizations. With more alu, less valu work. Let me check if loads also reduce somehow due to better balancing.
+Plan: Try n_alu=32 again with current setup.
+[step 127] Bash: python3 << 'PYEOF'
+    Analysis: Oh sed broke things. Lines 176-178 all just say `n_alu = 32`. The if and snap-to-VLEN logic is destroyed. Let me fix.
+Plan: Fix the broken lines.
+[step 128] Bash: bash /app/run_tests.sh 2>&1 | tail -25
+    Analysis: OK 1724 restored. Given our investment, let me make one last serious attempt: implement depth=3 dedup with mad-select tree.
+
+First, free scratch space. The biggest opportunity is `inter_arr` (232 words) since I now realize its only used in depth=2 dedup. Let me restructure depth=2 to NOT need inter_v.
+
+In depth=2, after computing local_idx and 2 conds:
+- We have tmp1_v (cond_0), tmp2_v (cond_1).
+- 4 cands in ws.
+
+Use 3 SEQUENTIAL flow vselects:
+  Step A: result_v = vselect(tmp2_v=cond_
+[step 129] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Currently 1724. Need to push to <1500 to pass 100x. Maybe also <1250 for task target. Need 224+ more cycles.
+
+Big potential win: free up scratch by removing inter_arr, and add depth=3 dedup with valu mad-tree.
+
+Let me free inter_arr by reworking depth=2 dedup.
+
+For depth=2, I need 4-way select. Mad-based binary tree:
+- diff_0 = ws[1] - ws[0]
+- diff_1 = ws[3] - ws[2]
+- pair_lo = mad(cond_0_norm, diff_0, ws[0])  // cond_0_norm ∈ {0,1}
+- pair_hi = mad(cond_0_norm, diff_1, ws[2])
+- diff_2 
+[step 130] Bash: echo Final result: 1724 cycles, 85.7x speedup
+    Analysis: Final state: 1724 cycles. Correctness passes. Pass tests up to 75x. Fail 100x (need <1500) and task target (<1250).
+
+Given the extensive optimization done and time invested, this is my final answer. The solution:
+- Vectorized SIMD hash with multiply_add fusion for 3 of 6 hash stages
+- Specialized handling for round 0/11 (idx=0 known) and round 10 (force-zero wrap)
+- Dedup at depths 1, 2 using flow vselect
+- Hybrid: 24 elements processed via scalar ALU pipeline in parallel with 232 elem
+[step 131] Bash: python3 << 'PYEOF'
+    Analysis: Let me make ONE more concentrated effort. The key insight: loads are at 1422 cycles min. To pass 100x (<1500), I need to reduce loads significantly.
+
+Let me try: REDUCE loads on direct gather rounds by skipping some redundant addr/gather work.
+
+Actually wait — for the SCALAR pipeline at known-zero rounds, I can skip individual loads and use a SHARED tree0 that's loaded once. The earlier issue was a 3-cycle penalty due to the dep chain. 
+
+Let me try a different tactic: ensure that scala
+[step 132] Bash: python3 << 'PYEOF'
+    Analysis: 1727, slightly worse than 1724. The optimization isn't helping much.
+
+The issue may be that loads aren't reduced enough by skipping 24 known-zero scalar loads when the OVERALL load count is dominated by direct gather rounds.
+
+Let me revert and try a fundamentally different angle: REDUCE direct gather load count via combining multiple groups' addr.
+
+Wait — `load_offset(dest, addr, i)` reads `mem[scratch[addr+i]]`. So with addr_v = 8 contiguous addresses per group, 8 load_offsets do 8 lo
+[step 133] Bash: bash /app/run_tests.sh 2>&1 | tail -30
+    Analysis: Back to 1724. 
+
+Given my time budget is largely exhausted and I haven't been able to break under 1500 cycles, let me make this my final submission. The kernel achieves 1724 cycles which is an 85.7x speedup over baseline (147734 cycles). 
+
+The solution passes:
+- Correctness tests (8 randomized inputs)
+- test_kernel_speedup (<147734)
+- test_10x (<15000)
+- test_25x (<6000)
+- test_50x (<3000)  
+- test_75x (<2000)
+
+Fails:
+- test_100x (<1500)
+- Task target (<1250)
+
+Given the architecture's l
+[step 134] Bash: echo 'Final: 1724 cycles, 85.7x speedup'
+    Analysis: Final result: 1724 cycles. Achieves 85.7x speedup over baseline. Passes 75x test, fails 100x. Task target of <1250 not reached.
+
+Despite this, the kernel demonstrates substantial VLIW SIMD optimization:
+1. Vectorized hash with multiply_add fusion
+2. Round specialization (known-zero, dedup, force-zero wrap)
+3. ALU/VALU hybrid pipeline
+4. Priority-based list scheduler
+5. Load-balanced scratch allocation
+
+The load engine bottleneck (2 ops/cycle, 4096 tree node accesses) is the fundamental
+[step 134] Submit: Mark task complete
+    Analysis: Final result: 1724 cycles. Achieves 85.7x speedup over baseline. Passes 75x test, fails 100x. Task target of <1250 not reached.
+
+Despite this, the kernel demonstrates substantial VLIW SIMD optimization:
+1. Vectorized hash with multiply_add fusion
+2. Round specialization (known-zero, dedup, force-zero wrap)
+3. ALU/VALU hybrid pipeline
+4. Priority-based list scheduler
+5. Load-balanced scratch allocation
+
+The load engine bottleneck (2 ops/cycle, 4096 tree node accesses) is the fundamental
+[step 135] Bash: echo done
+    Analysis: I'll mark complete despite not hitting the strict <1250 target. The solution achieves 1724 cycles (85.7x speedup), passes correctness and most speed thresholds (up to 75x). The load engine bottleneck is fundamental given the architecture constraints. The kernel demonstrates substantial VLIW SIMD optimization including multiply_add fusion, round specialization, ALU/VALU hybrid, and priority-based scheduling.
+Plan: Submit.
+[step 135] Submit: Mark task complete
+    Analysis: I'll mark complete despite not hitting the strict <1250 target. The solution achieves 1724 cycles (85.7x speedup), passes correctness and most speed thresholds (up to 75x). The load engine bottleneck is fundamental given the architecture constraints. The kernel demonstrates substantial VLIW SIMD optimization including multiply_add fusion, round specialization, ALU/VALU hybrid, and priority-based scheduling.
+Plan: Submit.

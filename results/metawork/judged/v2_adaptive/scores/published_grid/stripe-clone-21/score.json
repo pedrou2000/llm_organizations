@@ -1,0 +1,267 @@
+{
+  "overall_gap": -2.3255813953488373,
+  "overall_observed": 5.744186046511628,
+  "task_specific_gap": null,
+  "spine_gaps": {
+    "orientation_research": -4,
+    "decomposition_milestones": -2,
+    "verification_strategy": -3,
+    "progress_monitoring": 0,
+    "adaptation_correction": -2
+  },
+  "dimensions": [
+    {
+      "id": "orientation_research",
+      "name": "Reverse-engineering the Stripe wire contract",
+      "spine": true,
+      "importance": 9,
+      "weight": 0.20930232558139536,
+      "target_level": 8,
+      "observed_level": 4,
+      "gap": -4,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "40-70",
+          "note": "Establishes core contract (error envelope, list envelope, ID prefixes, status enums, models) entirely from recalled Stripe knowledge; no consultation of the real SDK or docs before coding."
+        },
+        {
+          "steps": "30-64",
+          "note": "All verification done via raw curl; the installed stripe SDK is never imported, pointed at api_base, or used to validate deserialization of any resource."
+        },
+        {
+          "steps": "34,63",
+          "note": "Discovers `charges` must be a list-object not a list of IDs \u2014 but via its own curl observation and memory, not by checking how the SDK parses it."
+        },
+        {
+          "steps": "37-39",
+          "note": "Catches card-number leak / last4 requirement from memory during testing rather than from an authoritative contract reference."
+        },
+        {
+          "steps": "168-173",
+          "note": "Hardcodes a TEST_CARDS set and reasons about decline behavior from recall; never verifies against Stripe's published PAN set or SDK behavior."
+        }
+      ],
+      "reasoning": "The agent grounds its implementation in recalled Stripe conventions \u2014 error/list envelopes, ID prefixes, status enums, last4 \u2014 and self-corrects a few wire shapes (charges object, card leak) via curl observation, which exceeds the pure-memory anchor 3. But it never consults the actual stripe SDK's expected shapes, never round-trips through the SDK, and never verifies the test-PAN set, decline codes, or event strings against any authoritative source \u2014 the exact behavior that defines anchor 5. This places it between 3 and 5, at 4."
+    },
+    {
+      "id": "decomposition_milestones",
+      "name": "Decomposing the surface into sequenced, checkable milestones",
+      "spine": true,
+      "importance": 9,
+      "weight": 0.20930232558139536,
+      "target_level": 8,
+      "observed_level": 6,
+      "gap": -2,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "7-10",
+          "note": "Foundation-first module plan: config, errors, store, auth, idempotency, models built before the main app/routes \u2014 genuine shared-machinery-first sequencing that isolates cross-cutting concerns as their own units."
+        },
+        {
+          "steps": "16-20",
+          "note": "All ~12 resources plus webhook delivery and billing worker bundled into one monolithic __init__.py write instead of separate sequenced milestones; the tricky subsystems weren't scheduled as risk-first de-risking chunks."
+        },
+        {
+          "steps": "30-47",
+          "note": "Verification walks resources in a sensible dependency order, but done-conditions are discovered ad hoc via testing rather than pre-attached to milestones."
+        },
+        {
+          "steps": "48-61",
+          "note": "Restricted-key permission scoping deferred to the very end and reworked ~5 times \u2014 a cross-cutting subsystem not isolated as an early milestone, producing the rework the dimension warns about."
+        }
+      ],
+      "reasoning": "The agent clearly sequenced shared foundations (config/errors/store/auth/idempotency) before CRUD resources and verified resources in a dependency-aware order, exceeding a flat to-do list (anchor 5). But it lacks explicit per-milestone done-conditions, bundled the hardest subsystems (state machine, webhooks) into a single monolithic write rather than isolating them as risk-first milestones, and left permission scoping to the end where it caused repeated rework \u2014 falling short of the concrete, verifiable, risk-scheduled decomposition of anchor 8. This places it at a 6, just above the sensible-foundation-first level."
+    },
+    {
+      "id": "verification_strategy",
+      "name": "Designing an SDK-driven, offline verification loop",
+      "spine": true,
+      "importance": 10,
+      "weight": 0.23255813953488372,
+      "target_level": 9,
+      "observed_level": 6,
+      "gap": -3,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "28-31",
+          "note": "Boots the server (via `python3 -m app`, not `bash start.sh`), confirms `/v1/health`, checks the auth-error path and empty list envelope \u2014 establishes the basic boot/health/response-shape checking that clears the low anchors."
+        },
+        {
+          "steps": "40-44",
+          "note": "Purpose-built curl checks for the tricky subsystems: decline card \u2192 402 card_error, manual-capture flow (requires_capture\u2192succeeded), capturing a succeeded PI \u2192 400 payment_intent_unexpected_state, and idempotency replay (identical IDs on success, same request_id on error replay, different body \u2192 400). This is exactly the level-8 trip-up coverage \u2014 but done via curl, not the SDK."
+        },
+        {
+          "steps": "45-62",
+          "note": "Continues broad error/happy-path validation across refunds, products, prices, subscriptions, webhook endpoints, and iteratively builds+tests restricted-key permission enforcement (403 on write with read scope), re-running curl after each fix."
+        },
+        {
+          "steps": "263",
+          "note": "Webhook delivery/retry/backoff/re-signing is only mentioned as an intent ('verify webhook delivery by checking logs') and never actually exercised; no receiver, no observed retries. Concurrent same-key non-double-charge and config-driven timings (retry schedule, TTL, billing interval) are never tested."
+        },
+        {
+          "steps": "1-278",
+          "note": "Across the entire trajectory the stripe Python SDK is never used \u2014 all verification is ad-hoc inline curl, not a repeatable saved harness and not an SDK round-trip, which is the central criterion of this dimension."
+        }
+      ],
+      "reasoning": "The agent boots the service, confirms health, and validates happy paths plus a rich set of error and trip-up behaviors (idempotent replay incl. error body, mismatched-body \u2192 idempotency_error, PaymentIntent state-machine rejections, decline handling, restricted-key 403s) \u2014 well beyond the level-5 'handful of error-case checks.' But it clears none of the SDK criterion (never uses the stripe SDK, all curl), never verifies concurrency/non-double-charge or webhook retry/backoff/re-signing, and never exercises the config-driven timings, so it falls short of the level-8 SDK-driven repeatable harness. This places it between the 5 and 8 anchors, at 6."
+    },
+    {
+      "id": "progress_monitoring",
+      "name": "Tracking coverage across a broad surface",
+      "spine": true,
+      "importance": 7,
+      "weight": 0.16279069767441862,
+      "target_level": 7,
+      "observed_level": 7,
+      "gap": 0,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "31-47",
+          "note": "Each step opens with an accurate running status ('X, Y work; now need Z') that walks methodically across customers, PMs, PI state machine, idempotency (success replay / error replay / different body), refunds, products, prices, subscriptions, webhooks, restricted keys \u2014 a regularly-updated done-vs-remaining map across the broad surface."
+        },
+        {
+          "steps": "48-62",
+          "note": "Detected that restricted-key permission enforcement was only superficially present ('all routes accept any valid key without checking scoped permissions'), i.e. distinguished 'endpoint exists' from 'endpoint correct', and iterated middleware fixes until 403 worked \u2014 recognizing the blocker rather than assuming done."
+        },
+        {
+          "steps": "11-23,26,38,53",
+          "note": "Repeatedly noticed heredoc truncation corrupting __init__.py/models.py and broke the loop by switching to Python fix-scripts \u2014 recognizing a stuck tactic and changing approach rather than re-running the same failing method."
+        },
+        {
+          "steps": "34,63",
+          "note": "Flagged the non-Stripe 'charges' field shape twice as an edge-correctness gap, showing awareness beyond happy path \u2014 but the fix status is left ambiguous through the final steps."
+        },
+        {
+          "steps": "63-66",
+          "note": "At close, identified remaining items and added webhook-endpoint update, but declared the task complete while webhook delivery/retry/re-sign and the billing worker were only ever 'to verify via logs' and never actually exercised \u2014 a coverage-tracking lapse where hard subsystems remained superficially present."
+        }
+      ],
+      "reasoning": "The agent maintained an accurate, continuously-updated done-vs-remaining picture across the ~12 resources, distinguished happy-path from edge-correctness (permission enforcement, card-number leak, charges shape), and broke out of a genuinely stuck editing tactic \u2014 behavior squarely above the level-5 anchor and reaching into the level-8 description. It falls short of a full 8/10 because at the finish it declared completion while two of the three hard subsystems (webhook delivery/re-sign, billing worker) were repeatedly deferred and never verified, so its final 'all works' map overstated what was truly done versus superficially present."
+    },
+    {
+      "id": "adaptation_correction",
+      "name": "Course-correcting when Stripe's real behavior diverges",
+      "spine": true,
+      "importance": 8,
+      "weight": 0.18604651162790697,
+      "target_level": 8,
+      "observed_level": 6,
+      "gap": -2,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "35",
+          "note": "Falsified assumption that decline test cards reject at PM creation; corrected _process_card so cards decline at confirmation instead \u2014 competent immediate divergence fix."
+        },
+        {
+          "steps": "37-38",
+          "note": "Caught wire-contract violation (full card number leaked instead of last4) and added sanitization \u2014 local correction to Stripe shape."
+        },
+        {
+          "steps": "14-15",
+          "note": "Revised the shared error model from JSONResponse to raised exception classes and propagated it through auth.py and idempotency.py \u2014 model-level revision across affected sites."
+        },
+        {
+          "steps": "48-61",
+          "note": "Found restricted-key permissions unwired; chose shared middleware over per-route patches, hit a 500 from uncaught middleware exception, diagnosed the root cause and reworked the approach several times until 403 worked \u2014 systemic correction to shared machinery."
+        },
+        {
+          "steps": "34,63,259",
+          "note": "Repeatedly noted PI charges should be a list-envelope not a plain ID list, but flagged it across multiple steps without a clear decisive fix \u2014 a divergence noticed but not fully corrected."
+        }
+      ],
+      "reasoning": "The agent reliably reacts to contradicting evidence by fixing the immediate divergence and adjusting nearby code (decline timing, card-number leak), matching the level-5 anchor. It goes beyond pure local patching in two places \u2014 refactoring the error envelope into exception classes propagated across modules, and reworking permission enforcement at the shared-middleware layer with root-cause diagnosis rather than per-route patches \u2014 which reaches toward level 8. But corrections were driven by its own inspection rather than authoritative SDK contradiction, and at least one flagged divergence (charges list shape) was noted repeatedly without decisive resolution, keeping it short of the disciplined, category-preventing behavior of 8+. Net: a 6."
+    }
+  ],
+  "rubric": {
+    "task_read": "A long-horizon, high-complexity build: a single-container service that must reproduce Stripe's REST API at the wire level across ~12 resource families so the real `stripe` Python SDK works unmodified. Difficulty comes from (a) a large, interdependent surface, (b) exact contract fidelity to behavior the spec only partially states (ID prefixes, JSON shapes, error envelopes, event types), and (c) three notoriously subtle subsystems \u2014 idempotency replay with concurrent serialization, webhook retry/re-signing, and the PaymentIntent state machine. A skilled practitioner would invest heavily in orientation, decomposition, and an SDK-driven verification loop, and would sequence the tricky subsystems deliberately rather than sprinting endpoint-by-endpoint.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "name": "Reverse-engineering the Stripe wire contract",
+        "description": "Understanding the true target contract \u2014 Stripe's object shapes, ID conventions, error envelope, status mappings, test PAN behavior, SDK expectations \u2014 before and while implementing, rather than coding to a guessed API.",
+        "why_it_matters": "The spec lists routes but leaves the exact wire format (field names, ID prefixes like pi_/ch_/cus_, list envelope, event type strings, how the stripe SDK deserializes responses) implicit. Wrong shapes silently break SDK compatibility even when endpoints 'work', so grounding in the real contract is decisive.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "Invents an ad-hoc API from the route table; no attempt to establish Stripe's actual response shapes, ID conventions, or how the SDK parses them.",
+          "3": "Reads the spec table and recalls a few Stripe fields from memory, but never checks the real SDK's expectations or clarifies ambiguous behaviors before coding.",
+          "5": "Establishes the core contract for the main objects (error envelope, list envelope, key ID prefixes, status enums) up front and consults the stripe SDK's shape for at least the central resources before implementing them.",
+          "8": "Systematically probes the contract: inspects/derives exact field shapes and ID prefixes per resource, the published test-PAN set and decline codes, event type strings, restricted-key scope semantics, and how the installed SDK deserializes each \u2014 building a reference it implements against and returns to as new resources arise.",
+          "10": "Sustained, layered reverse-engineering: verifies edge behaviors (error body on idempotent replay of a decline, late-webhook signature windows, capture-on-succeeded state error) against the SDK's actual round-trip, resolves each ambiguity with evidence rather than assumption, and keeps the contract reference authoritative as understanding deepens."
+        },
+        "spine": true
+      },
+      {
+        "id": "decomposition_milestones",
+        "name": "Decomposing the surface into sequenced, checkable milestones",
+        "description": "Breaking the ~12-resource surface plus three hard subsystems into an ordered hierarchy of sub-goals \u2014 each with a concrete done-condition \u2014 and sequencing foundations (auth, error envelope, health, one CRUD spine) before the tricky paths.",
+        "why_it_matters": "The surface is far too large for one undifferentiated push; shared machinery (auth, error envelope, idempotency, IDs) underpins everything, and the state machine / webhooks / idempotency demand dedicated focused effort. Poor sequencing causes rework and half-finished resources.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "No structure; starts writing endpoints in spec-table order with no notion of foundations, dependencies, or completion criteria.",
+          "3": "A flat to-do list of resources with no ordering rationale, no shared-machinery-first thinking, and no explicit done-condition per item.",
+          "5": "A sensible milestone plan: shared foundation (auth/errors/health/IDs) first, then CRUD resources, then the three tricky subsystems, with rough completion criteria for the major chunks.",
+          "8": "Dependency-aware decomposition that isolates cross-cutting machinery (idempotency middleware, error envelope, restricted-key scoping, background workers) as their own milestones, sequences the state machine / webhook / idempotency subsystems where their prerequisites are ready, and attaches a concrete verifiable done-condition to each milestone.",
+          "10": "A living, well-calibrated milestone hierarchy that reflects true risk and dependency: hardest/riskiest subsystems scheduled to de-risk early, milestones sized to remain independently verifiable, and the structure visibly steering execution and being refined as scope realities emerge \u2014 without ceremony."
+        },
+        "spine": true
+      },
+      {
+        "id": "verification_strategy",
+        "name": "Designing an SDK-driven, offline verification loop",
+        "description": "Deliberately building checks that the service actually behaves Stripe-compatibly \u2014 ideally exercising it through the real stripe SDK pointed at api_base, plus targeted tests for the three tricky subsystems and the boot/health contract \u2014 rather than assuming endpoints work.",
+        "why_it_matters": "Compatibility failures are invisible without active checking, and the hardest behaviors (idempotent replay of a decline, concurrent same-key non-double-charge, webhook backoff/re-sign, capture-on-succeeded rejection) are exactly the ones a casual smoke test misses. A verification loop is the primary defense over this horizon.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "No verification beyond the code appearing to run; never boots the service or checks a response shape.",
+          "3": "A few manual curl calls to a couple of endpoints; no SDK round-trip, no coverage of the tricky behaviors, no repeatable check.",
+          "5": "Boots via start.sh, confirms health, and validates the main happy paths \u2014 at least some via the actual stripe SDK \u2014 with a handful of error-case checks.",
+          "8": "Establishes a repeatable, SDK-driven check across resources AND purpose-built tests for the trip-up behaviors: idempotent replay returns identical IDs/bodies (including the original error), mismatched-body key \u2192 idempotency_error, concurrent same-key serializes without double-charge, webhook retries/backoff/re-signing, and the PaymentIntent state-machine errors.",
+          "10": "A comprehensive verification harness treated as the source of truth: adversarial and concurrency scenarios, config-driven timing behaviors (retry schedule, TTL, billing interval) exercised, restricted-key scope enforcement checked, and checks run continuously so regressions surface immediately \u2014 verification designed before/alongside the code it guards, not bolted on at the end."
+        },
+        "spine": true
+      },
+      {
+        "id": "progress_monitoring",
+        "name": "Tracking coverage across a broad surface",
+        "description": "Maintaining an accurate done-vs-remaining picture across all resources and subsystems, and detecting stuck/thrashing states (e.g. re-debugging the same SDK deserialization or signature mismatch in circles).",
+        "why_it_matters": "With dozens of endpoints and several stateful subsystems, it is easy to lose the plot \u2014 believe a resource is 'done' when only its happy path exists, or loop on one webhook/idempotency bug while the rest rots. Accurate progress tracking sustains forward motion over the horizon.",
+        "importance": 7,
+        "target_level": 7,
+        "anchors": {
+          "0": "No sense of overall coverage; no awareness of what remains or whether time is being sunk into a stuck path.",
+          "3": "Vague mental tracking; conflates 'endpoint exists' with 'endpoint correct'; repeats the same failing fix without recognizing the loop.",
+          "5": "Keeps a usable checklist of resources/subsystems and their rough state, and generally notices when blocked on one area.",
+          "8": "Maintains an accurate, regularly-updated map of implemented-vs-verified-vs-remaining across the surface, distinguishes 'passes happy path' from 'edge-cases covered', and explicitly recognizes and breaks out of circular debugging on the tricky subsystems.",
+          "10": "Continuous, evidence-based situational awareness across the whole horizon: tracks verification status per subsystem, catches thrashing early and changes tactic, and reprioritizes remaining work against a clear picture of what is truly done versus superficially present."
+        },
+        "spine": true
+      },
+      {
+        "id": "adaptation_correction",
+        "name": "Course-correcting when Stripe's real behavior diverges",
+        "description": "Revising design/approach when an assumption about the wire contract or a subsystem is falsified \u2014 e.g. the SDK rejects a response shape, the signature scheme is wrong, or the idempotency/state model doesn't hold \u2014 rather than pressing on.",
+        "why_it_matters": "Many assumptions about exact Stripe behavior will prove wrong mid-build; the cost of a falsified contract assumption compounds across every resource that shares it. Prompt correction (especially to shared machinery) prevents systemic breakage.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "Ignores contradicting evidence (SDK errors, failing checks) and keeps building on the falsified assumption.",
+          "3": "Reacts to individual failures with local patches but never revisits the underlying wrong model, so the same class of bug recurs.",
+          "5": "When a check or the SDK contradicts an assumption, fixes it and adjusts nearby code, correcting the immediate divergence competently.",
+          "8": "Treats a falsified assumption as a signal to revise the shared model (error envelope, ID scheme, signature/idempotency design) and propagate the correction across affected resources, rather than patching each site \u2014 with a brief rationale for the change.",
+          "10": "Anticipates and rapidly localizes divergences, re-grounds in the real contract when surprised, and makes disciplined design revisions that prevent whole categories of failure \u2014 visibly trading off rework cost against correctness, and never barrelling ahead on a known-broken foundation."
+        },
+        "spine": true
+      }
+    ]
+  },
+  "cost_usd": 0.8053329,
+  "errors": []
+}

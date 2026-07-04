@@ -1,0 +1,101 @@
+{
+  "task_read": "A long-horizon GPU-kernel task: implement AF3 outgoing TriMul as a Triton kernel that must be numerically correct across a large input domain (many B/N/dim combos, Normal and heavy-tailed Cauchy inputs, masked/unmasked) AND hit a hard latency budget (max of 10 per-shape medians \u2264 10400 \u03bcs on H100). Difficulty comes from a subtle math contract (outgoing contraction = left @ right.T over the inner axis, exact op ordering, mask placement, gate-before-final-linear), fp32 precision under a 2e-2 tolerance with heavy tails, tiling for N up to 2048, and the fact that the grader is not directly runnable \u2014 the agent must construct its own oracle. This warrants heavy, sustained meta-work: careful spec orientation, correctness-before-latency sequencing, a self-built verification oracle spanning the domain, and iterative adaptation to numerical/perf failures.",
+  "dimensions": [
+    {
+      "id": "orientation_research",
+      "name": "Spec & environment orientation",
+      "description": "Extracting the exact TriMul contract from the spec (contraction direction, op ordering, mask placement, gate timing, shapes/tolerances) and probing the Triton/GPU environment before committing to an implementation.",
+      "why_it_matters": "The spec has several easy-to-invert details (outgoing left@right.T vs left@right, mask applied once at the projection stage, LN_hidden then out_gate then to_out, nomask semantics). Misreading any one silently breaks correctness everywhere, so a correct mental model up front is the single highest-leverage investment.",
+      "importance": 9,
+      "target_level": 8,
+      "anchors": {
+        "0": "Starts coding a kernel with no evidence of having parsed the contraction direction, op ordering, or shapes; treats the einsum as an ordinary matmul.",
+        "3": "Reads the spec once and restates it loosely, but leaves ambiguous points (e.g. whether it's left@right or left@right.T, where the mask goes, gate-before-or-after to_out) unresolved before implementing.",
+        "5": "Correctly identifies the core contract \u2014 outgoing contraction, mask-at-projection, LN\u2192gate\u2192to_out ordering, fp32, tolerance, hidden_dim=128 \u2014 and notes the target shape ranges before writing the kernel.",
+        "8": "Distills a precise, itemized contract and cross-checks the subtle points against each other (e.g. confirms the einsum axis labels imply left@right.T, notes nomask==ones equivalence, flags Cauchy heavy tails + 2e-2 tolerance as a precision constraint) and probes Triton availability / GPU capabilities before design.",
+        "10": "Builds a rigorous, self-consistent spec model AND anticipates the failure modes it implies (large-N tiling limits, fp32 accumulation of a K-sum over the sequence axis under heavy-tailed inputs, memory footprint at N=2048/dim=768), grounding early design choices in that analysis rather than discovering them later by trial."
+      },
+      "spine": true
+    },
+    {
+      "id": "decomposition_milestones",
+      "name": "Correctness-first decomposition & sequencing",
+      "description": "Breaking the build into ordered milestones \u2014 e.g. a plain reference implementation, a naive-but-correct Triton kernel, then optimization \u2014 each with an explicit done-check, rather than one monolithic push at a fused fast kernel.",
+      "why_it_matters": "The spec explicitly prioritizes correctness over latency. An agent that jumps straight to a fused, tiled, fast kernel conflates two hard problems and cannot localize bugs; staged milestones (correct math \u2192 correct Triton \u2192 fast Triton) make each failure diagnosable and protect the correctness gate.",
+      "importance": 8,
+      "target_level": 7,
+      "anchors": {
+        "0": "No structure: one giant attempt at a fast fused kernel, correctness and performance entangled.",
+        "3": "Implicit ordering only; may write a reference but doesn't use it as a milestone gate, or starts optimizing before any shape is verified correct.",
+        "5": "Clear phases \u2014 reference PyTorch, then Triton correctness, then latency tuning \u2014 with a rough notion of when each is 'done'.",
+        "8": "Explicit ordered milestones each with a concrete exit criterion (e.g. 'Triton matches reference within 2e-2 on all shapes' before touching perf), and sub-goals sequenced by risk (get the contraction/ordering right first, tile large N next, fuse last).",
+        "10": "A milestone hierarchy that also sequences the domain deliberately (small shapes \u2192 large N \u2192 high dim \u2192 Cauchy/mask variants) and the latency budget by hardest shape, treating each as a checkpoint; the plan visibly governs execution order and is revisited as milestones complete."
+      },
+      "spine": true
+    },
+    {
+      "id": "verification_strategy",
+      "name": "Self-built correctness oracle across the domain",
+      "description": "Deliberately constructing an independent reference (e.g. a straightforward PyTorch/einsum TriMul) and comparing the kernel against it across the full supported domain and input distributions, since the actual grader cannot be run.",
+      "why_it_matters": "The grader is hidden and correctness is the pass/fail priority under a tight 2e-2 tolerance. Without a self-built oracle exercised over B/N/dim variety, masked/unmasked, and Normal + Cauchy inputs, 'looks right' is worthless \u2014 verification IS the safety net for this task.",
+      "importance": 10,
+      "target_level": 8,
+      "anchors": {
+        "0": "No independent check; correctness asserted from inspection or a single run with no reference.",
+        "3": "Compares to a reference on one tiny shape / one distribution, or eyeballs a few numbers; no coverage of large N, high dim, mask, or Cauchy.",
+        "5": "Builds a correct reference implementation and checks the kernel against it on several representative shapes with the specified tolerance, including at least one masked and one Cauchy case.",
+        "8": "Systematic comparison harness sweeping the domain edges (N up to 2048, dim up to 768, B variants), both distributions, masked/unmasked and nomask, using rtol=atol=2e-2 as the gate; investigates any near-tolerance mismatch rather than accepting it.",
+        "10": "Treats verification as an evolving instrument: parameterized sweeps over the full domain, targeted stress on the known-fragile cases (heavy-tailed Cauchy accumulation, largest shapes, mask edge behavior), reasons about worst-case numerical error vs the tolerance, and re-runs the full suite after every change so no optimization silently regresses correctness."
+      },
+      "spine": true
+    },
+    {
+      "id": "progress_monitoring",
+      "name": "Tracking correctness coverage and latency headroom",
+      "description": "Maintaining an accurate live picture of which shapes/distributions are verified correct and where the latency stands against the 10400 \u03bcs budget, and detecting when debugging is going in circles.",
+      "why_it_matters": "Two moving targets (a wide correctness matrix and a max-over-10-shapes latency gate) are easy to lose track of; an agent that forgets which shapes still fail, or that keeps re-fixing the same numerical bug, will thrash away its horizon.",
+      "importance": 6,
+      "target_level": 6,
+      "anchors": {
+        "0": "No sense of what's done vs remaining; repeats the same failed fix or declares success with large parts of the domain untested.",
+        "3": "Vague tracking; conflates 'passed one shape' with 'passed', or loses track of which latency shape is the bottleneck.",
+        "5": "Keeps a usable running account of which shapes/distributions pass and roughly where latency sits relative to budget.",
+        "8": "Maintains an explicit correctness-coverage picture and per-shape latency readout, identifies the binding (max) latency shape, and notices stalls/circular debugging and names them.",
+        "10": "Continuously reconciles a done-vs-remaining ledger across both correctness and latency, catches regressions and thrash early, and reallocates effort to the actual bottleneck (worst shape or fragile distribution) rather than polishing already-passing cases."
+      },
+      "spine": true
+    },
+    {
+      "id": "adaptation_correction",
+      "name": "Course-correction on numerical & performance failures",
+      "description": "Revising design or approach when confronted with falsifying evidence \u2014 wrong contraction results, tolerance failures on Cauchy/large-N cases, tiling/memory limits, or latency overshoot \u2014 rather than pushing the same approach harder.",
+      "why_it_matters": "This task reliably produces divergence: heavy tails break naive accumulation, large N/dim breaks a single-tile kernel, and a correct-but-slow kernel misses the budget. Progress depends on diagnosing the true cause and changing the design, not brute-forcing.",
+      "importance": 8,
+      "target_level": 7,
+      "anchors": {
+        "0": "Ignores failing checks or repeatedly retries the same broken kernel with cosmetic tweaks.",
+        "3": "Reacts to failures with trial-and-error patches lacking a diagnosis; may abandon correctness to chase speed or vice versa.",
+        "5": "When a check fails, forms a plausible hypothesis, fixes the specific cause (e.g. accumulation dtype, tiling for large N, gate/mask placement) and re-verifies.",
+        "8": "Diagnoses failures to root cause (distinguishes a math-contract error from a numerical-precision error from a perf problem) and makes deliberate design changes \u2014 e.g. re-tiling, changing accumulation strategy, restructuring the fused pass \u2014 validated against the oracle.",
+        "10": "Systematically isolates each divergence, updates the design/plan in response, and balances the correctness/latency tension with principled trade-offs (never sacrificing the correctness gate for speed), demonstrating repeated evidence-driven pivots that converge rather than oscillate."
+      },
+      "spine": true
+    },
+    {
+      "id": "latency_measurement_discipline",
+      "name": "Grader-faithful latency measurement",
+      "description": "Building a timing methodology that mirrors the grader (CUDA-event timing, warmup discard, per-shape median, input regenerated per iteration, max over the 10 shapes) so latency decisions are based on trustworthy numbers.",
+      "why_it_matters": "The latency gate is precise and adversarial (max of 10 medians, specific timing protocol). Optimizing against a mismeasured proxy \u2014 no warmup, wall-clock timing, or the wrong shape \u2014 wastes effort and can hide a failing bottleneck shape, so how the agent measures is a genuine, separable meta-demand.",
+      "importance": 6,
+      "target_level": 6,
+      "anchors": {
+        "0": "No latency measurement, or a single untimed run treated as 'fast enough'.",
+        "3": "Ad hoc timing (wall clock, no warmup, one shape) that doesn't reflect the grader's protocol.",
+        "5": "Uses CUDA-event timing with warmup on the relevant shapes and looks at medians rather than single samples.",
+        "8": "Timing harness that reproduces the grader's methodology \u2014 warmup discard, per-shape median over repeated runs, input regenerated per iteration, evaluating the max across all 10 shapes \u2014 and uses it to target the binding shape.",
+        "10": "A faithful, reusable benchmarking instrument that also accounts for measurement noise/variance, confirms the worst-case shape stays under budget with margin, and drives optimization decisions from these numbers rather than intuition, re-checking after each change."
+      },
+      "spine": false
+    }
+  ]
+}

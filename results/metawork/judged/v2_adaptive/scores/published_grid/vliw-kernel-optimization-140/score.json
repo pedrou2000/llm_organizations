@@ -1,0 +1,313 @@
+{
+  "overall_gap": -1.06,
+  "overall_observed": 7.0,
+  "task_specific_gap": 1.0,
+  "spine_gaps": {
+    "orientation_research": -1,
+    "decomposition_milestones": -2,
+    "verification_strategy": -2,
+    "progress_monitoring": -1,
+    "adaptation_correction": -1
+  },
+  "dimensions": [
+    {
+      "id": "orientation_research",
+      "name": "Reverse-engineering the ISA, simulator, and reference kernel",
+      "spine": true,
+      "importance": 10,
+      "weight": 0.2,
+      "target_level": 9,
+      "observed_level": 8,
+      "gap": -1,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "2-7",
+          "note": "Systematically read problem.py, kernel.py, and submission_tests.py before editing; correctly enumerated exact slot limits (alu 12, valu 6, load 2, store 2, flow 1) and VLEN=8, and restated the computation as parallel tree traversal with hashing."
+        },
+        {
+          "steps": "11-13",
+          "note": "When vbroadcast failed as a load op, went back and read the load and valu functions in problem.py to determine vbroadcast is a valu instruction \u2014 treating source as ground truth to resolve an ambiguity mid-optimization."
+        },
+        {
+          "steps": "15,41",
+          "note": "Correctly inferred VLIW write semantics from the simulator (writes take effect at end of cycle, same-bundle reads see old values), and applied this to fix data-dependency bugs."
+        },
+        {
+          "steps": "59",
+          "note": "Discovered alu doesn't support const (needs load), again correcting the model by returning to ISA behavior rather than guessing."
+        },
+        {
+          "steps": "83,236,278",
+          "note": "Repeatedly identified the scarcest resource quantitatively \u2014 256 indirect loads per round = 128 cycles with only 2 load slots \u2014 showing an accurate cost model of which unit bounds throughput."
+        }
+      ],
+      "reasoning": "The agent read the simulator, reference kernel, and tests up front, produced an accurate model of exact SLOT_LIMITS, the per-slot cost model, hash-stage data dependencies, and the output contract, and repeatedly revisited problem.py mid-optimization to resolve specific ISA ambiguities (vbroadcast engine, const-in-alu, VLIW write timing) \u2014 matching the level-8 anchor and touching level 10's 'revisits source as ground truth' behavior. It falls short of a full 9-10 because several ISA facts (vbroadcast placement, const restrictions) were learned reactively through errors rather than derived from a precise initial reading, and its quantitative modeling centered on identifying loads as the bottleneck rather than a complete resource-issue model."
+    },
+    {
+      "id": "decomposition_milestones",
+      "name": "Staging the 118x speedup into checkpoints",
+      "spine": true,
+      "importance": 8,
+      "weight": 0.16,
+      "target_level": 8,
+      "observed_level": 6,
+      "gap": -2,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "17-19",
+          "note": "Established a correct baseline first (working at 12,109 cycles for 16 rounds) before optimizing \u2014 the 'correct rewrite' rung of the ladder, worked as an explicit first phase."
+        },
+        {
+          "steps": "23-26",
+          "note": "On correctness regressions, explicitly restored the last known-good version ('go back to the working version, 5597 cycles') before optimizing further \u2014 preserving a fall-back rung, a level-8 behavior."
+        },
+        {
+          "steps": "62-66",
+          "note": "Estimated per-round cycle payoffs from the tree structure (~500 cycles), tried tree optimization, saw it regress (2999 vs 2826), and reverted to the best known version \u2014 cost-model-informed milestone reasoning plus known-good recovery."
+        },
+        {
+          "steps": "53-56",
+          "note": "Tracked distinct rungs by speedup (52x at 2852/2826) against the 118x/<1250 target, choosing the next bottleneck each time, but never set explicit intermediate numeric gates like '<20k' or '<5k'."
+        }
+      ],
+      "reasoning": "The agent clearly worked ordered phases (correct \u2192 vectorize \u2192 pack \u2192 pipeline \u2192 structural), which exceeds the vague 'make it faster' of anchor 3 and matches anchor 5's 'get correct first, then vectorize, then pack.' It goes beyond 5 by repeatedly preserving and reverting to known-good versions at each rung (anchor-8 behavior) and offering some estimated per-optimization cycle payoffs (anchor-10 flavor). However, it never maintained an explicit quantitative milestone ladder with pre-set intermediate gates ('<20k','<5k'); progress was measured opportunistically against a single 1250 target, keeping it short of a full 8. This places the observed level at 6."
+    },
+    {
+      "id": "verification_strategy",
+      "name": "Correctness + cycle verification beyond run_tests.sh",
+      "spine": true,
+      "importance": 9,
+      "weight": 0.18,
+      "target_level": 8,
+      "observed_level": 6,
+      "gap": -2,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "10-21",
+          "note": "Runs run_tests.sh and python kernel.py after changes, checking both correctness and cycle count (e.g. reports scratch usage 748/1536 at step 10, 5597 cycles at 21) \u2014 the anchor-5 baseline loop."
+        },
+        {
+          "steps": "16-18",
+          "note": "Isolates a sub-computation by testing with 1 round (1069 cycles, works) then 16 rounds (fails), localizing the index-wrapping bug \u2014 a sub-computation isolation trait from anchor 8."
+        },
+        {
+          "steps": "36",
+          "note": "Runs py_compile as an independent pre-check before executing \u2014 building slightly tighter feedback than just the full test."
+        },
+        {
+          "steps": "54",
+          "note": "Counts actual instruction count to attribute where cycles go \u2014 a form of per-transformation cycle attribution, but done only sporadically."
+        },
+        {
+          "steps": "60-64",
+          "note": "Relies on run_tests.sh to catch scratch overflow and a regression (tree opt worsened 2826->2999), then reverts \u2014 verification catches regressions but only via the provided harness, not independent differential testing vs the reference."
+        }
+      ],
+      "reasoning": "The agent consistently ran the provided test after meaningful changes and checked both correctness and cycle count (anchor 5), and added several tighter checks beyond it \u2014 isolating behavior by reducing rounds, counting instructions for cycle attribution, compile pre-checks, and scratch-limit monitoring. But it never built genuine differential testing against the reference on custom/edge inputs, nor an independent bundle slot-limit checker, relying on the simulator/harness to surface violations. That mix of anchor-5 baseline plus a few sporadic anchor-8 traits, without a systematic layered harness, places it at a 6."
+    },
+    {
+      "id": "progress_monitoring",
+      "name": "Tracking cycles-to-target and detecting plateaus",
+      "spine": true,
+      "importance": 8,
+      "weight": 0.16,
+      "target_level": 8,
+      "observed_level": 7,
+      "gap": -1,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "19-31",
+          "note": "Maintains an accurate running cycle ledger across iterations (12109 \u2192 5901 \u2192 5597 \u2192 4781 \u2192 4493 \u2192 4238) and always states current speedup vs. the 118x/1250 target, showing continuous awareness of distance-to-goal."
+        },
+        {
+          "steps": "48,53",
+          "note": "Attributes cycle deltas to specific changes: 'round 0 optimization saved about 132 cycles' (4238\u21924106) and '2852 cycles with VLIW packing! significant improvement from 4106', demonstrating delta-to-change attribution (anchor 8)."
+        },
+        {
+          "steps": "64-67",
+          "note": "Detects a regression ('tree optimization made things worse, 2999 vs 2826'), reverts to the best version, and at the end explicitly recognizes diminishing returns ('I've tried many optimizations but can't get below 1250'), pivoting to submit."
+        },
+        {
+          "steps": "34-52",
+          "note": "Weak spot: a long stretch repeatedly reporting the same '4238 cycles' while re-attempting software-pipelining variants that keep failing correctness; the number is tracked but the agent grinds on the same line of attack for many steps before it finally works, showing incomplete plateau/thrash recognition."
+        }
+      ],
+      "reasoning": "The agent sustains an accurate quantitative picture of current cycle count vs. the 1250 target throughout, consistently attributes gains and regressions to specific transformations (round-0 opt saved ~132, VLIW packing 4106\u21922852, tree opt regressed to 2999 and was reverted), which matches anchor 8 behavior. It falls short of a 9-10 because during the software-pipelining phase (steps 34-52) it grinds on the same failing approach for many iterations while re-reporting the unchanged '4238 cycles', without recognizing the circular re-tuning until much later. This lands it at a 7 \u2014 clearly above the 5 anchor and exhibiting most of the 8 anchor, but with a notable stretch of unrecognized thrashing."
+    },
+    {
+      "id": "adaptation_correction",
+      "name": "Revising approach when a transformation fails or backfires",
+      "spine": true,
+      "importance": 8,
+      "weight": 0.16,
+      "target_level": 8,
+      "observed_level": 7,
+      "gap": -1,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "11-13",
+          "note": "Discovered vbroadcast is a valu op not a load op; corrected the machine model and re-placed the instruction rather than retrying blindly."
+        },
+        {
+          "steps": "15",
+          "note": "Diagnosed IndexError as same-cycle read-after-write semantics in VLIW bundles (writes take effect end of cycle) \u2014 genuine root-cause understanding of the cost/timing model."
+        },
+        {
+          "steps": "23,26,29,47",
+          "note": "Repeatedly reverts to the last known-good baseline (5597/4238 cycles) after a change breaks correctness, then retries a different, failure-informed tactic \u2014 never strands the kernel broken."
+        },
+        {
+          "steps": "41-42,50",
+          "note": "Recurring rediscovery of the SAME bundle-level data-hazard (XOR writes vv, multiply_add reads vv; address-write vs load) \u2014 correct diagnosis each time but the fix never hardens into a systematic rule, so the hazard keeps returning."
+        },
+        {
+          "steps": "59-60",
+          "note": "Diagnosed 'alu doesn't support const' and a scratch-space overflow, updating the model and reverting to the 2826 baseline."
+        },
+        {
+          "steps": "64-66",
+          "note": "Detected that the tree optimization regressed cycles (2826\u21922999), decisively reverted to the best version rather than continuing on the falsified approach."
+        }
+      ],
+      "reasoning": "The agent consistently diagnoses root causes of divergences (wrong engine for vbroadcast, same-cycle write semantics, const/alu constraints) and updates its machine model, and it reliably reverts to a known-good baseline when a change breaks or regresses \u2014 behavior spanning the level-5 (revert-and-retry) and level-8 (root-cause diagnosis + model update) anchors. It falls short of 8-10 because it repeatedly re-encounters the same VLIW same-bundle data-hazard class rather than converting the diagnosis into a durable, systematic discipline, and it never re-derives the milestone ladder or abandons strategies as decisively as the top anchors require. This places it solidly at 7, between the 5 and 8 anchors."
+    },
+    {
+      "id": "performance_modeling",
+      "name": "Quantitative bottleneck / lower-bound reasoning",
+      "spine": false,
+      "importance": 7,
+      "weight": 0.14,
+      "target_level": 7,
+      "observed_level": 8,
+      "gap": 1,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "83",
+          "note": "Identifies the binding resource quantitatively: '256 indirect loads per round (128 cycles with 2 load slots)' \u2014 a defensible lower bound derived from work volume divided by slot ports, and directs subsequent effort at loads."
+        },
+        {
+          "steps": "98,152,192",
+          "note": "Counts hash ops (18\u219212 per vector via multiply_add), address-compute cost (4\u21921 cycle/group using valu vs alu), and compares load latency vs compute latency ('loading group g = 24 cycles, hash+index for g-1 = 15 cycles') to justify software pipelining."
+        },
+        {
+          "steps": "278,305",
+          "note": "Reasons about unique indices per round from tree structure (round1: 2 loads, round2: 4 loads) and quantifies per-round savings (round0 127, round1 126, round2 124, round3 120 \u2248 500 cycles) to prioritize which rounds to optimize."
+        },
+        {
+          "steps": "326-329",
+          "note": "At the end reiterates the load bottleneck as the reason it stalled at 2826, but never computes the global load floor (\u2248128\u00d716 cycles) to conclude the target is below the pure-load floor and therefore requires eliminating loads \u2014 a gap versus the sharp-roofline/futility anchor."
+        }
+      ],
+      "reasoning": "The agent repeatedly computes defensible lower bounds from work volume and slot limits (256 loads / 2 load slots = 128 cycles/round), counts op classes (hash stages, address computation), and uses these numbers to steer optimization toward the load bottleneck and pipelining \u2014 matching anchor 8. It falls short of anchor 10 because it never assembles these into a single global cycle floor to judge how close it is to optimal or whether 1250 is even reachable given the unavoidable load cost, treating the load bound as a repeated observation rather than a sharp model that dictates the essential strategy."
+    }
+  ],
+  "rubric": {
+    "task_read": "An extremely long-horizon, high-difficulty optimization task: reverse-engineer an undocumented custom VLIW SIMD ISA + simulator (problem.py, SLOT_LIMITS, HASH_STAGES, reference kernel) and rewrite /app/kernel.py to run a ~118x faster (147,734 \u2192 <1250 cycles) kernel that stays correct on randomized inputs. Difficulty comes from (a) deep understanding of an unfamiliar machine model and the reference semantics, and (b) sustained, quantitatively-driven optimization \u2014 vectorization, bundle/slot packing, scheduling \u2014 where naive effort plateaus far short of the target. This warrants heavy, sustained meta-work across all five faculties.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "name": "Reverse-engineering the ISA, simulator, and reference kernel",
+        "description": "Reading problem.py to build an accurate model of the machine \u2014 ISA/opcodes, per-slot limits, hash stages, cycle-cost model \u2014 and inferring exactly what the reference kernel must compute.",
+        "why_it_matters": "The entire optimization space, correctness contract, and cost model are latent in problem.py; every downstream decision (which ops are cheap, how many slots per bundle, what result must match) depends on how accurately the agent decodes the environment before and while optimizing.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "Edits kernel.py without reading problem.py or the reference kernel; guesses at the ISA.",
+          "3": "Skims problem.py; grasps a few opcodes but misunderstands slot limits, the cost model, or what the kernel must output.",
+          "5": "Reads the simulator and reference kernel enough to enumerate available ops, understand the per-cycle/per-slot cost model, and correctly restate the computation to be reproduced.",
+          "8": "Builds a precise mental (or written) model: exact SLOT_LIMITS per unit, cost of each op class, data dependencies of the hash stages, and the numeric contract the output must satisfy \u2014 and cites specific lines/behaviors to justify it.",
+          "10": "Derives a near-complete quantitative machine model (what a bundle can issue per cycle, which resource is scarcest, where the reference wastes cycles) and revisits problem.py to resolve specific ambiguities as they arise mid-optimization, treating the source as ground truth rather than assumption."
+        },
+        "spine": true
+      },
+      {
+        "id": "decomposition_milestones",
+        "name": "Staging the 118x speedup into checkpoints",
+        "description": "Breaking the huge gap into an ordered ladder \u2014 e.g. correct rewrite \u2192 vectorized \u2192 slot-packed/scheduled \u2192 target \u2014 each with a concrete cycle/correctness checkpoint, rather than one undifferentiated optimization push.",
+        "why_it_matters": "A ~118x reduction is unreachable in one leap; without intermediate targets and a known-good baseline to fall back to, the agent cannot tell which transformation bought which savings or recover from a regression.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "No sub-goals; blindly tweaks the kernel hoping the number drops.",
+          "3": "Vague ordering ('make it faster') with no explicit intermediate targets or done-criteria.",
+          "5": "Identifies a few phases (get correct first, then vectorize, then pack) and works them roughly in order.",
+          "8": "Maintains an explicit milestone ladder with quantitative gates (e.g. 'correct baseline', '<20k', '<5k', '<1250') and a preserved known-good version at each rung.",
+          "10": "Milestones are derived from the cost model (each targets a specific bottleneck with an estimated cycle payoff), sequenced by dependency and expected ROI, and revised as measurements reveal where the real cycles are."
+        },
+        "spine": true
+      },
+      {
+        "id": "verification_strategy",
+        "name": "Correctness + cycle verification beyond run_tests.sh",
+        "description": "Deliberately designing checks that catch both correctness regressions (across randomized inputs) and cycle changes, rather than trusting a single final test run.",
+        "why_it_matters": "Aggressive SIMD/packing transformations silently break correctness or violate slot limits; a tight, frequent verification loop is what separates real progress from a fast-but-wrong kernel.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "Never runs run_tests.sh, or only at the very end; no correctness checking during changes.",
+          "3": "Runs the provided test occasionally; treats a green run as sufficient and does no independent correctness reasoning.",
+          "5": "Runs run_tests.sh after meaningful changes and checks both correctness and the cycle count before proceeding.",
+          "8": "Builds tighter feedback than provided: diffs against the reference on custom/edge inputs, isolates sub-computations, and verifies slot-limit legality of bundles independently before the full test.",
+          "10": "Maintains a layered verification harness \u2014 fast unit checks on individual stages, randomized differential testing vs. the reference, and per-transformation cycle attribution \u2014 so any regression is caught and localized immediately rather than discovered at the end."
+        },
+        "spine": true
+      },
+      {
+        "id": "progress_monitoring",
+        "name": "Tracking cycles-to-target and detecting plateaus",
+        "description": "Keeping an accurate running picture of current cycle count vs. the 1250 target and whether recent edits are still yielding gains or thrashing.",
+        "why_it_matters": "Over a long optimization horizon it is easy to burn effort on transformations that don't move the number; recognizing a plateau or a regression early is what prevents wasted cycles of engineering.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "Loses track of the current cycle count or whether changes helped; no sense of distance to target.",
+          "3": "Knows the latest number but not the trend; repeats ineffective tweaks without noticing.",
+          "5": "Tracks cycle count across iterations and knows roughly how far from 1250, adjusting effort accordingly.",
+          "8": "Attributes cycle deltas to specific changes, notices when a line of attack has stopped paying off, and pivots rather than grinding on it.",
+          "10": "Sustains a quantitative ledger of where cycles are spent vs. the theoretical floor, continuously reprioritizing toward the largest remaining bottleneck and explicitly recognizing diminishing returns or circular re-tuning."
+        },
+        "spine": true
+      },
+      {
+        "id": "adaptation_correction",
+        "name": "Revising approach when a transformation fails or backfires",
+        "description": "Changing the optimization or scheduling strategy when measurements contradict expectations (a packing breaks slot limits, a rewrite regresses cycles, an assumed op is expensive).",
+        "why_it_matters": "The cost model has surprises; barrelling ahead on a falsified assumption (e.g. a bundle that can't legally issue, or a 'vectorization' that costs more) wastes the long horizon and can strand the kernel in a broken state.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "Repeats the same failing approach; ignores contradicting test results.",
+          "3": "Reacts to failures with random tweaks rather than diagnosing why the assumption was wrong.",
+          "5": "When a change regresses or breaks, reverts and tries a different tactic informed by the failure.",
+          "8": "Diagnoses the root cause of a divergence (which slot/cost assumption was wrong), updates the machine model, and redirects the plan accordingly.",
+          "10": "Treats surprises as evidence that refines the cost model, abandons whole strategies decisively when the data warrants, and re-derives the milestone ladder from the corrected understanding \u2014 without losing the known-good baseline."
+        },
+        "spine": true
+      },
+      {
+        "id": "performance_modeling",
+        "name": "Quantitative bottleneck / lower-bound reasoning",
+        "description": "Reasoning explicitly about the theoretical cycle floor and which hardware resource (slots, ports, dependency chains) bounds performance, to steer optimization toward what actually matters.",
+        "why_it_matters": "A 118x target is only reachable by targeting the binding constraint; roofline-style reasoning about the minimum bundles needed and the scarcest slot distinguishes principled optimization from trial-and-error tweaking.",
+        "importance": 7,
+        "target_level": 7,
+        "anchors": {
+          "0": "No reasoning about limits; purely empirical poking.",
+          "3": "Hand-wavy 'this should be faster' with no quantitative basis.",
+          "5": "Estimates roughly how many bundles the work needs and which op class dominates, using that to pick targets.",
+          "8": "Computes a defensible lower bound on cycles from the work volume and slot limits, and directs effort at the resource that bound identifies.",
+          "10": "Maintains a sharp roofline-style model (min bundles given SIMD width, slot ports, and dependency latency), uses it to judge how close to optimal the kernel is, and knows when further effort is futile vs. when headroom remains."
+        },
+        "spine": false
+      }
+    ]
+  },
+  "cost_usd": 1.1553972000000001,
+  "errors": []
+}

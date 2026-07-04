@@ -1,0 +1,85 @@
+{
+  "task_read": "A long-horizon, high-complexity reverse-engineering task: re-implement an MTEB-style embedding evaluation harness that must reproduce gold scores for 37 datasets across 6 distinct protocols within very tight per-metric tolerances (1e-2, 3e-2 for clustering), with ALL 37 required to pass. The defining difficulty is that the dev harness (`run_eval.py`) checks only structural validity \u2014 it gives zero signal on numerical correctness \u2014 so the agent's own verification against the spec's precise semantics and the public mteb leaderboard is the only correctness oracle. Each protocol hides exact-reproduction traps (composing in-place shuffles, uncapped bootstrap k, opposite negation conventions between STS and pair classification, per-prediction summarization skips), so success rests on precise orientation, per-protocol decomposition, and self-designed verification far more than on raw coding.",
+  "dimensions": [
+    {
+      "id": "orientation_research",
+      "name": "Protocol & environment orientation",
+      "description": "Understanding each of the 6 protocols precisely, inspecting task-config JSONs and dataset JSONL shapes, and recalling/consulting the mteb leaderboard semantics before and during coding.",
+      "why_it_matters": "Every metric must match a hidden reference exactly; the spec encodes numerous subtle traps (shuffle composition, bootstrap-k not capped at n, negation-direction differences). An agent that skims and codes from a generic mental model of MTEB will silently miss these and fail tolerance with no dev-harness warning.",
+      "importance": 9,
+      "target_level": 8,
+      "anchors": {
+        "0": "Starts coding a protocol without reading its spec section, config fields, or dataset layout; assumes formats.",
+        "3": "Reads the spec top-to-bottom once but treats it as generic MTEB; does not open a single task config or peek at a JSONL to confirm keys/label shapes.",
+        "5": "Reads the spec carefully, inspects representative task configs and dataset files, and confirms field names, splits, and per-task min/max before implementing each type.",
+        "8": "Systematically maps all 6 protocols to their configs and data shapes, and explicitly surfaces the non-obvious traps as things to get right (in-place shuffle composition, uncapped bootstrap k, STS-vs-pair negation asymmetry, per-prediction summarization skip, title+text concat, ignore_identical_ids), tying each to why it changes the number.",
+        "10": "All of the above, plus proactively grounds expected outputs in external truth \u2014 pulls the published all-MiniLM-L6-v2 leaderboard numbers per task type as target values, and reconciles ambiguous config cases (hierarchical labels, null max_fraction, seed/split overrides) against both spec and data before writing code, leaving essentially no protocol detail unverified."
+      },
+      "spine": true
+    },
+    {
+      "id": "decomposition_milestones",
+      "name": "Per-protocol milestone structure",
+      "description": "Breaking the build into ordered, independently-verifiable sub-goals \u2014 typically one protocol (and one representative task) at a time \u2014 each with a clear done-condition.",
+      "why_it_matters": "The 37 tasks cleanly factor into 6 protocols; getting one protocol's task to match the leaderboard before scaling to its siblings prevents compounding errors and gives natural checkpoints across a long horizon.",
+      "importance": 8,
+      "target_level": 7,
+      "anchors": {
+        "0": "One undifferentiated push: attempts to write all six protocols and run all 37 tasks at once, with no intermediate checkpoints.",
+        "3": "Loosely groups work by protocol but with no explicit done-criteria; jumps between types opportunistically.",
+        "5": "Implements protocol by protocol, running each against its tasks before moving on, with an implicit 'this type works' checkpoint.",
+        "8": "Explicit ordered milestones \u2014 e.g. get one representative task per type matching gold first, then fan out to remaining datasets of that type \u2014 each with a concrete done-condition (structural pass AND number within tolerance of expected).",
+        "10": "Milestones are sequenced by risk/uncertainty (tackling the trap-heavy protocols like clustering/pair-classification with dedicated verification budget), with shared infrastructure (encoding, IO, skip-and-continue) factored out first, and each milestone's exit gate tied to an external reference number rather than to 'it ran'."
+      },
+      "spine": true
+    },
+    {
+      "id": "verification_strategy",
+      "name": "Self-built correctness oracle",
+      "description": "Deliberately designing checks for numerical correctness beyond the structural-only dev harness \u2014 cross-referencing the mteb leaderboard, sanity-checking score ranges, and probing trap-prone protocol details.",
+      "why_it_matters": "This is the crux of the task: `run_eval.py` explicitly does NOT judge correctness, and the real verifier runs offline. An agent that trusts green structural checks will ship plausible-but-wrong numbers. The gap between adequate and excellent process lives almost entirely here.",
+      "importance": 10,
+      "target_level": 9,
+      "anchors": {
+        "0": "Relies solely on the structural dev harness; treats a structural pass as success; never compares any number to an external reference.",
+        "3": "Eyeballs a couple of scores for plausibility (e.g. 'nDCG looks reasonable') but does no systematic comparison to known values.",
+        "5": "Cross-checks main_scores for several tasks against the published all-MiniLM-L6-v2 leaderboard and confirms they land near expected, treating divergence as a bug signal.",
+        "8": "Builds a repeatable comparison of per-task (and per-metric) scores against leaderboard/spec-derived expectations for all task types, and designs targeted micro-checks for the known traps (e.g. verifies shuffle composition changes results across experiments, that bootstrap k stays uncapped, that STS negates but pair-classification threshold sweeps do not).",
+        "10": "Establishes a rigorous verification regime that would catch subtle protocol errors before the hidden verifier does: expected-value table per task, tolerance-aware comparison mirroring the grader (1e-2 / 3e-2), unit-level checks on the fiddly sub-computations, and explicit reasoning about determinism (seeding, split) so that a passing self-check is genuinely predictive of the offline verdict rather than coincidental."
+      },
+      "spine": true
+    },
+    {
+      "id": "progress_monitoring",
+      "name": "37-task progress & trust calibration",
+      "description": "Maintaining an accurate picture of which tasks are structurally valid AND likely correct across all 37, and not mistaking structural-green for done.",
+      "why_it_matters": "With 37 required passes and a misleading dev signal, losing track of which tasks are truly verified (vs merely running) is the main way to quit early believing the job is done, or to thrash re-checking already-solid tasks.",
+      "importance": 7,
+      "target_level": 7,
+      "anchors": {
+        "0": "No tracking; runs things ad hoc and cannot say how many tasks are done or whether any are verified beyond structure.",
+        "3": "Tracks only the structural harness output; conflates 'structurally valid' with 'correct' and treats all-green as completion.",
+        "5": "Keeps a clear inventory of the 37 tasks and their status, distinguishing 'structurally passing' from 'number checked against reference', and notices tasks not yet cross-validated.",
+        "8": "Maintains an accurate live ledger of per-task state across both structural and numerical dimensions, explicitly flags tasks that pass structure but haven't been reconciled to expected values, and detects when a fix to shared code silently changed other tasks' numbers.",
+        "10": "Sustains a precise, continually-updated picture across the full horizon \u2014 knows exactly what remains, distrusts the structural signal by design, re-verifies downstream tasks after shared-code changes, and recognizes stuck/circular states (e.g. repeatedly tweaking one protocol without the number moving) and escalates strategy rather than looping."
+      },
+      "spine": true
+    },
+    {
+      "id": "adaptation_correction",
+      "name": "Divergence diagnosis & course-correction",
+      "description": "When a computed score fails to match the reference, isolating the responsible protocol detail and correcting it, rather than randomly tweaking or barrelling ahead.",
+      "why_it_matters": "Given the density of traps, first-pass numbers will diverge for several protocols. Turning a wrong number into a targeted diagnosis (which sub-step, which convention) is what converts a near-miss into a pass; flailing burns the long horizon.",
+      "importance": 8,
+      "target_level": 8,
+      "anchors": {
+        "0": "Ignores divergence or ships mismatching numbers; never revisits an approach once written.",
+        "3": "Notices a score is off and makes scattershot changes (swap a sign, change a k) hoping one sticks, without localizing the cause.",
+        "5": "On a mismatch, forms a hypothesis about which protocol step is wrong and tests it, correcting the specific detail (e.g. realizes distances need negating, or that title+text concat was missing).",
+        "8": "Systematically bisects a divergence to the exact sub-computation, distinguishes tolerance-level drift from real bugs, and applies the fix while checking it doesn't regress sibling tasks \u2014 updating the mental model of the protocol accordingly.",
+        "10": "Treats each divergence as evidence that refines a precise model of the reference implementation: reasons from the direction/magnitude of the error to the culpable convention (e.g. v_measure systematically high \u2192 bootstrap k was capped), fixes root cause not symptom, and generalizes the correction across all affected tasks of that type in one disciplined pass."
+      },
+      "spine": true
+    }
+  ]
+}

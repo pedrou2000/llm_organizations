@@ -1,0 +1,101 @@
+{
+  "task_read": "A very long-horizon, high-complexity port: reimplement an entire Sinatra blog (routing, Liquid views, Sequel-shaped ORM, OAuth2, CSRF/sessions, rate limiting, security headers, Markdown, FTS5 search, feeds, media, ETag caching, a cross-runtime SQLite job queue with exact BEGIN IMMEDIATE claim semantics, admin/audit) in Rust with structural response parity against a running reference. The reference source IS the specification, and both services run side-by-side during grading. Difficulty comes from breadth (a dozen+ semi-independent subsystems each with exacting observable behavior), hard binary/latency/no-Ruby tripwire constraints, and the fact that correctness is only knowable by differential comparison \u2014 so a skilled practitioner invests heavily and continuously in reading the reference, sequencing subsystems, and building differential verification.",
+  "dimensions": [
+    {
+      "id": "orientation_research",
+      "name": "Reference reverse-engineering & environment probing",
+      "description": "Reading the Ruby/Sinatra reference as the executable spec and probing the running reference to nail down exact observable contracts (headers, ORM semantics, job-queue claim/backoff, migration schema, env vars) before and while porting.",
+      "why_it_matters": "The reference is the only source of truth; every parity dimension (header sets, JSON shapes, job schema, CSP, pagination links) is undocumented except in that code and its live responses. Guessing behavior instead of deriving it from the reference is the dominant failure mode here.",
+      "importance": 10,
+      "target_level": 9,
+      "anchors": {
+        "0": "Starts writing Rust from the task prose alone; never opens the reference source or hits the running reference.",
+        "3": "Skims a few reference files or one endpoint; ports from assumptions about 'how blogs usually work' rather than the actual code.",
+        "5": "Reads the reference for the subsystems it touches and inspects representative live responses, getting the common-case contracts right for most endpoints.",
+        "8": "Systematically maps the reference before committing: enumerates routes, migration/job schema, header-setting middleware, env vars, and ORM query/ordering/soft-delete/validation semantics; captures live reference responses as ground-truth fixtures; identifies the subtle contracts (BEGIN IMMEDIATE claim, retry/backoff, RFC 5988 links, CSP, conditional-GET) up front.",
+        "10": "Sustained, source-grounded investigation throughout: derives exact byte/schema semantics for the shared job queue and edge behaviors from the Ruby code, re-reads the reference whenever a diff is unexplained, and treats the reference as an oracle it interrogates continuously rather than a one-time read \u2014 leaving essentially no behavior 'invented'."
+      },
+      "spine": true
+    },
+    {
+      "id": "decomposition_milestones",
+      "name": "Subsystem sequencing & milestone structure",
+      "description": "Breaking the port into an ordered hierarchy of shippable milestones (health/skeleton first, then routing, then each subsystem) each with a concrete done-check, rather than one monolithic push.",
+      "why_it_matters": "A dozen-plus subsystems with dependencies (scaffold \u2192 routing \u2192 ORM \u2192 auth \u2192 the harder feeds/search/job-queue) demand deliberate ordering; without milestones the agent cannot make or measure incremental progress across such a long horizon.",
+      "importance": 9,
+      "target_level": 9,
+      "anchors": {
+        "0": "No structure; codes end-to-end with no ordering or intermediate targets.",
+        "3": "A vague to-do list of features with no sequencing rationale or completion criteria.",
+        "5": "A sensible ordered breakdown into subsystems with rough priorities and a working skeleton before feature work.",
+        "8": "Explicit milestone hierarchy that sequences by dependency and risk (get /_health + build/start.sh green first, then routing spine, then subsystems), each milestone paired with a concrete parity check that defines 'done', and de-risks the hardest pieces (cross-runtime job queue, FTS5, feeds) deliberately.",
+        "10": "A living, dependency-aware plan that also allocates effort by grading surface area and risk, keeps a runnable service at every milestone boundary, and re-plans the remaining subsystems as discoveries change the ordering \u2014 never losing sight of the whole while going deep on one part."
+      },
+      "spine": true
+    },
+    {
+      "id": "verification_strategy",
+      "name": "Differential parity verification",
+      "description": "Deliberately building the means to know the port is correct \u2014 firing identical requests at the Rust service and the reference and diffing status/headers/JSON/HTML/feeds/binary the way the grader does \u2014 rather than assuming endpoints work.",
+      "why_it_matters": "Correctness is defined as structural parity with a live reference; the only trustworthy signal is a diff against that reference. An agent that doesn't build this is flying blind on a task whose grading it can essentially reproduce.",
+      "importance": 10,
+      "target_level": 10,
+      "anchors": {
+        "0": "No verification; assumes endpoints are correct because they compile or return 200.",
+        "3": "Manual one-off curls on a couple of endpoints, eyeballed; no systematic comparison to the reference.",
+        "5": "Runs both services and compares responses for the main endpoints, catching obvious status/body mismatches.",
+        "8": "Builds a reusable differential harness that sends the same requests to both services and compares the way the grader will (header-set with transport noise ignored, JSON with dynamic keys elided, HTML tag-tree/text, feed UUID normalization), and runs it across subsystems to drive the work.",
+        "10": "Treats the harness as the spec-checker: broad request coverage including edge cases (conditional GET/ETag, rate-limit windows, pagination links, CSRF failures, job claim/retry/dead-letter, concurrency), plus explicit checks for the non-parity tripwires (binary \u226440MB, no Ruby in the process tree, latency vs Ruby p50, shared-schema compatibility), all re-run as a regression suite as changes land."
+      },
+      "spine": true
+    },
+    {
+      "id": "progress_monitoring",
+      "name": "Cross-subsystem progress tracking",
+      "description": "Maintaining an accurate, current picture of which subsystems reach parity vs remain broken across a long horizon, and detecting when effort on one endpoint is going in circles.",
+      "why_it_matters": "With many subsystems and a differential suite producing lots of diffs, it is easy to lose the plot, re-fix the same thing, or believe more is done than is. An accurate done/remaining ledger is what sustains progress over this horizon.",
+      "importance": 8,
+      "target_level": 8,
+      "anchors": {
+        "0": "No sense of overall state; no tracking of what passes or remains.",
+        "3": "Occasional mental notes; frequently revisits already-'done' areas or forgets whole subsystems.",
+        "5": "Keeps a rough checklist of subsystem status and generally knows what's left.",
+        "8": "Maintains an accurate, updated ledger of parity status per subsystem tied to harness results, and notices when it's thrashing on one diff (repeated failed attempts) versus making progress.",
+        "10": "Continuously reconciles a precise done-vs-remaining picture against differential-suite output across all subsystems, quantifies remaining risk, and explicitly recognizes stuck/circular states early and reallocates attention rather than grinding \u2014 sustaining orientation across the entire long build."
+      },
+      "spine": true
+    },
+    {
+      "id": "adaptation_correction",
+      "name": "Course-correction on divergence",
+      "description": "Revising approach, framework/library choices, or design when reality diverges \u2014 e.g. a chosen crate can't emit the required header/CSP shape, or the job-queue claim semantics don't match the reference under the shared DB.",
+      "why_it_matters": "Early bets (web framework, template engine, ORM/query layer) and assumptions about reference behavior will be falsified by diffs; the ability to change course rather than force the wrong tool is decisive on a parity task with hard constraints.",
+      "importance": 8,
+      "target_level": 8,
+      "anchors": {
+        "0": "Barrels ahead on falsified assumptions; ignores persistent diffs or constraint violations.",
+        "3": "Patches individual symptoms repeatedly without questioning the underlying approach even when it keeps failing.",
+        "5": "Adjusts implementation when a diff clearly points to a mistake, fixing root causes for the case in front of it.",
+        "8": "Recognizes when a divergence is structural (a library choice, a schema/claim-semantics mismatch, a wrong model of reference behavior) and revises the design or swaps the approach, re-verifying afterward.",
+        "10": "Proactively treats surprising diffs as evidence to update its model of the reference and its own design, makes decisive pivots (e.g. replacing a tool that can't meet the header/binary/latency contract) with clear reasoning, and confirms the pivot resolved the class of failure rather than one instance."
+      },
+      "spine": true
+    },
+    {
+      "id": "constraint_tripwire_management",
+      "name": "Hard-constraint & tripwire guarding",
+      "description": "Proactively tracking the pass/fail constraints that don't surface as response diffs \u2014 40MB binary cap, no Ruby runtime/bridge crates in the process tree, latency parity, and exact shared job-queue schema/claim compatibility.",
+      "why_it_matters": "These constraints can silently invalidate an otherwise parity-correct port; they must be designed for from the start (crate choices affect binary size; the shared DB schema must match the reference exactly) rather than discovered at the end.",
+      "importance": 7,
+      "target_level": 8,
+      "anchors": {
+        "0": "Ignores the constraints entirely; discovers violations (oversized binary, Ruby-bridge dep, incompatible job schema) only if ever.",
+        "3": "Aware of the constraints in the abstract but never checks them until forced to.",
+        "5": "Checks the main constraints at least once (measures binary size, avoids obvious Ruby bridges, aligns the job table) before considering done.",
+        "8": "Bakes the constraints into early decisions \u2014 chooses crates with binary size in mind, verifies the job schema/claim semantics against the reference under the shared DB, and monitors binary size and latency as work proceeds.",
+        "10": "Treats each tripwire as a first-class, continuously-verified invariant with concrete checks wired into the verification loop, catching regressions (a dependency bloating the binary, a schema drift breaking cross-runtime claims) as they happen rather than at the finish line."
+      },
+      "spine": false
+    }
+  ]
+}
