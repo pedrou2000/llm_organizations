@@ -54,6 +54,14 @@ def score_class(x: Any) -> str:
     return "good" if x >= GOOD_AT else ("mid" if x >= MID_AT else "low")
 
 
+def gap(x: Any) -> str:
+    """A signed meta-work gap on the 0-10 scale, e.g. -3.38 -> '−3.4', 0 -> '0.0'.
+    Uses a real minus sign so it reads cleanly next to the score."""
+    if not _is_num(x):
+        return _MISSING
+    return f"{x:+.1f}".replace("-", "−")
+
+
 # The object handed to templates (Jinja can't call bare module functions as
 # `fmt.pct(...)` unless we give it a namespace).
 class Fmt:
@@ -62,6 +70,7 @@ class Fmt:
     chars = staticmethod(chars)
     duration = staticmethod(duration)
     score_class = staticmethod(score_class)
+    gap = staticmethod(gap)
 
 
 FMT = Fmt()
