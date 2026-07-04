@@ -153,19 +153,19 @@ All of the above survive an `openpyxl`-compatible `.xlsx` export and re-import i
 
 # Your dimension
 
-id:           verification_strategy
-name:         Self-built verification beyond the smoke suite
-description:  Deliberately constructing checks — running run.sh, adding targeted tests, cross-checking against Excel/LibreOffice values, verifying XLSX via openpyxl, exercising performance bounds — rather than trusting the non-exhaustive provided tests.
-why it matters for this task: The spec warns the dev_tests are a small smoke suite and grading is a much larger hidden suite against held-out ground truth. Passing run.sh proves almost nothing; only agent-designed verification (value correctness, round-trips, error mapping, perf thresholds) predicts hidden-suite success.
+id:           decomposition_milestones
+name:         Subsystem decomposition & milestone sequencing
+description:  Breaking a sprawling product into an ordered hierarchy of independently-verifiable subsystems (persistence/API skeleton → dependency graph → formula parser/evaluator → functions → spill → collab → XLSX → analyst surfaces → SPA) with a dependency-aware build order.
+why it matters for this task: There are dozens of loosely-coupled features on top of a shared core (parser, dep-graph, recompute). Wrong ordering (e.g. building pivots before the evaluator works, or the SPA before the API stabilizes) causes rework and stalls; a foundation-first order lets each layer be validated before the next depends on it.
 
 You score the agent's OBSERVED level on this dimension, 0-10, using these
 task-specific anchors as your ruler:
 
-  [ 0] Never runs the tests or the server against real requests; assumes code works because it was written.
-  [ 3] Runs run.sh and treats green as done; no checks for the many behaviors the smoke suite doesn't cover.
-  [ 5] Runs run.sh plus some ad-hoc manual API calls to sanity-check the features built, catching obvious breakage.
-  [ 8] Designs verification targeted at hidden-suite risk: checks formula values against known Excel results, verifies error-sentinel/HTTP-status mapping, round-trips CSV/XLSX (re-reading with openpyxl), exercises spill/ghost rejection and collab ordering, and checks at least one performance scenario against its threshold.
-  [10] Establishes a reusable verification harness spanning subsystems (value oracles, round-trip diffs, perf timing, restart-persistence checks) run repeatedly as the build grows, treats any divergence from Excel/LibreOffice semantics as a failing signal to chase, and calibrates confidence per subsystem from evidence rather than assumption.
+  [ 0] One undifferentiated push; no milestones, features tackled in arbitrary order.
+  [ 3] A flat to-do list of features with no dependency ordering or done-criteria.
+  [ 5] Clear phased plan that puts the health endpoint/persistence and core engine (parse → dep-graph → recompute) before dependent features, with rough milestones.
+  [ 8] Dependency-aware milestone hierarchy where each milestone has an explicit done-check and unlocks the next; risky/foundational core (topological recompute, spill, XLSX value parity) is sequenced early and features are batched sensibly.
+  [10] Masterful decomposition that isolates the highest-risk shared machinery first, defines crisp exit criteria per milestone, sequences the ~150-function catalog and perf/collab/analyst layers to minimize rework, and is explicitly revisited/re-ordered as the true dependency structure emerges.
 
 Report the OBSERVED level only — where the agent's actual behavior falls on this
 scale. Do not judge whether that level was "enough" for the task; that
@@ -191,11 +191,11 @@ comparison happens downstream.
 
 Other judges are independently grading these dimensions:
 
-  - Contract reverse-engineering & Excel-semantics grounding: Extracting the exact wire shapes from /dev_tests/helpers.py and grounding function/error behavior in real Excel-365 semantics before and while building.
-  - Subsystem decomposition & sequenced milestones: Breaking a sprawling product into an ordered hierarchy of subsystems (core CRUD+persistence+health, recompute engine, functions, dynamic arrays, analyst surface, collab, XLSX, SPA) each with an explicit done-check and a dependency-aware order.
-  - Coverage tracking across the feature surface: Maintaining an accurate picture of which of the many subsystems/functions are done, working, or broken, and detecting when effort is stuck or circling on one area at the expense of the whole.
-  - Course-correction on divergence: Revising design, approach, or plan when reality contradicts assumptions — wrong wire shape, mismatched Excel semantics, performance blown, a library that can't round-trip — instead of pressing on with a falsified premise.
-  - Scope allocation under breadth-exceeds-capacity: Deliberately allocating finite effort across a feature surface too large to finish perfectly — choosing which functions/subsystems to fully implement, which to stub, and which to defer to maximize graded coverage.
+  - Contract discovery & environment orientation: Reverse-engineering the exact wire shapes and semantics from /dev_tests/helpers.py and run.sh, probing the runtime, and inferring the huge implicit Excel-365 contract before and while building.
+  - Self-built verification beyond the smoke suite: Deliberately constructing checks — running the live server against helpers.py flows, testing function/error/spill semantics, XLSX round-trip via openpyxl, and perf benchmarks — knowing dev_tests is non-exhaustive and grading is on a hidden suite.
+  - Coverage tracking across a huge feature surface: Maintaining an accurate live picture of which subsystems/functions/endpoints are done, in-progress, or untouched across a very long horizon, and detecting stalls or circular debugging.
+  - Course-correction on architecture & approach: Revising design decisions — library-vs-hand-rolled formula evaluation and OOXML I/O, engine architecture, recompute strategy — when they hit correctness, performance, or contract walls, rather than barrelling ahead.
+  - Fidelity to exact Excel/wire semantics as an explicit target: Treating precise conformance — exact error sentinels and their precedence, spill/ghost rules, locale canonicalization, deterministic pivot/header ordering, iterative-calc convergence math, cell-by-cell value parity — as a first-class objective rather than settling for approximately-right behavior.
 
 If you find evidence that belongs to one of those facets, leave it to its judge
 — do not let it raise or lower YOUR score. Evidence may be relevant to several
@@ -230,7 +230,7 @@ When you are done exploring, output ONLY this JSON, in a single ```json block:
 
 ```json
 {
-  "dimension_id": "verification_strategy",
+  "dimension_id": "decomposition_milestones",
   "observed_level": <int 0-10>,
   "confidence": "<low|medium|high>",
   "evidence": [
