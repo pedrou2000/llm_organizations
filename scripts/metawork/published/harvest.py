@@ -50,12 +50,12 @@ def parse_args():
 
 def main():
     args = parse_args()
-    out_path = Path(args.results_dir) / "metawork" / "harvest" / f"harvest_{args.size}.parquet"
+    out_path = Path(args.results_dir) / "metawork" / "trajectories" / "published" / f"harvest_{args.size}.parquet"
     if out_path.exists() and not args.force:
         print(f"skipping: {out_path} already exists (use --force to re-harvest)")
         return
 
-    cache = Path(args.results_dir) / "metawork" / "trajectories"
+    cache = Path(args.results_dir) / "metawork" / "trajectories" / "published" / "raw"
     print(f"harvesting size={args.size} (seed={args.seed}) -> {out_path}")
     rows = harvest(size=args.size, seed=args.seed, cache=cache, tasks=args.tasks)
 

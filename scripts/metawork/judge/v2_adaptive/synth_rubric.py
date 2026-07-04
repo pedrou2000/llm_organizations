@@ -8,17 +8,17 @@ so we can eyeball two things:
 
 Usage:
     # a real task (reads vendor/swe-marathon/tasks/<task>/instruction.md)
-    python scripts/metawork/synth_rubric.py --task excel-clone
-    python scripts/metawork/synth_rubric.py --task parameter-golf
+    python scripts/metawork/judge/v2_adaptive/synth_rubric.py --task excel-clone
+    python scripts/metawork/judge/v2_adaptive/synth_rubric.py --task parameter-golf
 
     # the synthetic trivial task (the proportionality acid-test — should be LEAN)
-    python scripts/metawork/synth_rubric.py --trivial
+    python scripts/metawork/judge/v2_adaptive/synth_rubric.py --trivial
 
     # any file as the spec
-    python scripts/metawork/synth_rubric.py --spec-file /path/to/spec.md
+    python scripts/metawork/judge/v2_adaptive/synth_rubric.py --spec-file /path/to/spec.md
 
     # dump the full JSON rubric too
-    python scripts/metawork/synth_rubric.py --task excel-clone --json
+    python scripts/metawork/judge/v2_adaptive/synth_rubric.py --task excel-clone --json
 """
 from __future__ import annotations
 
@@ -27,11 +27,11 @@ import asyncio
 import json
 from pathlib import Path
 
-from metawork.judges.v2_adaptive import (
+from metawork.judges.v2_adaptive import synthesize_rubric
+from metawork.judges.v2_adaptive.rubric import (
     ANCHOR_LEVELS,
     DEFAULT_RUBRIC_MODEL_LABEL,
     normalized_weights,
-    synthesize_rubric,
 )
 
 _TASKS_DIR = Path("vendor/swe-marathon/tasks")
@@ -104,8 +104,8 @@ async def main() -> None:
     ap.add_argument("--model", default=DEFAULT_RUBRIC_MODEL_LABEL,
                     help=f"rubric synthesizer model (default {DEFAULT_RUBRIC_MODEL_LABEL})")
     ap.add_argument("--json", action="store_true", help="also dump full JSON")
-    ap.add_argument("--out-dir", default="results/metawork/rubrics",
-                    help="where to save the rubric JSON (default: results/metawork/rubrics)")
+    ap.add_argument("--out-dir", default="results/metawork/judged/v2_adaptive/rubrics",
+                    help="where to save the rubric JSON (default: results/metawork/judged/v2_adaptive/rubrics)")
     ap.add_argument("--no-save", action="store_true", help="don't persist the rubric")
     args = ap.parse_args()
 

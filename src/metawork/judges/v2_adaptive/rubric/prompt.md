@@ -154,7 +154,7 @@ using their exact `id`s (`orientation_research`, `decomposition_milestones`,
 
 ```json
 {
-  "task_read": "2-4 sentences: the task's horizon, complexity, sources of difficulty, and therefore how much and what kind of meta-work a skilled practitioner would invest here. This justifies your choices below.",
+  "task_read": "2-4 sentences MAX — keep it tight; the dimensions below are what matter and a long task_read risks truncating them. Cover: the task's horizon, complexity, sources of difficulty, and therefore how much / what kind of meta-work a skilled practitioner would invest here.",
   "dimensions": [
     {
       "id": "orientation_research",

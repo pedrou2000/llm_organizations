@@ -1,7 +1,7 @@
 """Source A: the published SWE-Marathon website corpus (observational study).
 
 Downloads published trajectories and judges them. Kept for the observational
-analysis (its outputs back the figures in scripts/metawork/plot.py); the
+analysis (its outputs back the figures in scripts/metawork/judge/v1_fixed/plot.py); the
 nudge experiment from M4 onward uses `metawork.harbor` instead.
 """
 from .harvest import SIZES, harvest

@@ -1,8 +1,8 @@
 """Launch the meta-work trajectory visualizer (local web app).
 
-    python scripts/metawork/viz.py                # http://127.0.0.1:8010
-    python scripts/metawork/viz.py --port 9000
-    python scripts/metawork/viz.py --jobs-dir results/metawork/harbor_jobs
+    python scripts/metawork/trajectories/viz.py                # http://127.0.0.1:8010
+    python scripts/metawork/trajectories/viz.py --port 9000
+    python scripts/metawork/trajectories/viz.py --jobs-dir results/metawork/trajectories/harbor
 
 Over SSH, forward the port:  ssh -L 8010:127.0.0.1:8010 <host>
 """
@@ -20,7 +20,7 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", type=int, default=8010)
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--jobs-dir", default="results/metawork/harbor_jobs")
+    ap.add_argument("--jobs-dir", default="results/metawork/trajectories/harbor")
     args = ap.parse_args()
 
     app = create_app(args.jobs_dir)

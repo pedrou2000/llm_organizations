@@ -52,7 +52,7 @@ def main():
     ap.add_argument("--results-dir", default="results")
     args = ap.parse_args()
 
-    path = Path(args.results_dir) / "metawork" / "harvest" / f"harvest_{args.size}.parquet"
+    path = Path(args.results_dir) / "metawork" / "trajectories" / "published" / f"harvest_{args.size}.parquet"
     df = load(path)
 
     print(f"=== {len(df)} trajectories | {df['task'].nunique()} tasks | "

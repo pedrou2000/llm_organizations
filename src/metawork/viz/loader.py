@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-DEFAULT_JOBS_DIR = Path("results/metawork/harbor_jobs")
+DEFAULT_JOBS_DIR = Path("results/metawork/trajectories/harbor")
 
 
 def _read_json(p: Path) -> dict | None:

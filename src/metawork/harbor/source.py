@@ -2,7 +2,7 @@
 
 This is the Source-B sibling of `metawork.published.harvest`. Where that module
 pulls the PUBLISHED SWE-Marathon trajectories off the website, this one reads the
-trajectories WE generate locally with Harbor (`results/metawork/harbor_jobs/...`) and
+trajectories WE generate locally with Harbor (`results/metawork/trajectories/harbor/...`) and
 renders each into the same blind `flat_text` + metadata row the judge consumes.
 
 It deliberately shares nothing with the published path (no web download, no
@@ -30,7 +30,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-DEFAULT_JOBS_DIR = Path("results/metawork/harbor_jobs")
+DEFAULT_JOBS_DIR = Path("results/metawork/trajectories/harbor")
 
 # Map ATIF tool function names to the coarse "kind" vocabulary the published
 # trajectories use (so trajectory_stats / the judge see familiar action types).

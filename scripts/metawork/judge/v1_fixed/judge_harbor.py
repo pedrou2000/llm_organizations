@@ -1,13 +1,13 @@
 """Run the meta-work judge over OUR Harbor trajectories (Source B).
 
-Reads a Harbor job under results/metawork/harbor_jobs/<job>/, flattens each trial's
+Reads a Harbor job under results/metawork/trajectories/harbor/<job>/, flattens each trial's
 ATIF trajectory to blind text, judges it with the pinned judge model, and joins
 the outcome metadata back for analysis. Independent of the published-corpus
 harvest path (harvest.py / run.py).
 
 Usage:
-    python scripts/metawork/judge_trajectories.py --job m1_gpt55_final16 --judge-model opus-4.8
-    python scripts/metawork/judge_trajectories.py --job m1_gpt55_final16 --task excel-clone --limit 2
+    python scripts/metawork/judge/v1_fixed/judge_harbor.py --job m1_gpt55_final16 --judge-model opus-4.8
+    python scripts/metawork/judge/v1_fixed/judge_harbor.py --job m1_gpt55_final16 --task excel-clone --limit 2
 """
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def parse_args():
         description=__doc__,
     )
     ap.add_argument("--job", required=True,
-                    help="Harbor job dir name under results/metawork/harbor_jobs/ "
+                    help="Harbor job dir name under results/metawork/trajectories/harbor/ "
                          "(e.g. m1_gpt55_final16)")
     ap.add_argument("--task", default=None,
                     help="optional task prefix filter (e.g. excel-clone)")
@@ -41,7 +41,7 @@ def parse_args():
     ap.add_argument("--limit", type=int, default=None,
                     help="judge only the first N trajectories (cheap probe)")
     ap.add_argument("--results-dir", default="results")
-    ap.add_argument("--jobs-dir", default="results/metawork/harbor_jobs")
+    ap.add_argument("--jobs-dir", default="results/metawork/trajectories/harbor")
     ap.add_argument("--force", action="store_true",
                     help="re-judge even if the output parquet exists")
     return ap.parse_args()
@@ -52,7 +52,7 @@ async def main():
     suffix = "" if not args.parity else "_parity"
     if args.limit is not None:
         suffix += f"_limit{args.limit}"
-    out_path = (Path(args.results_dir) / "metawork" / "judged"
+    out_path = (Path(args.results_dir) / "metawork" / "judged" / "v1_fixed"
                 / f"judged_harbor_{args.job}__{args.judge_model}{suffix}.parquet")
     if out_path.exists() and not args.force:
         print(f"skipping: {out_path} already exists (use --force to re-judge)")

@@ -5,7 +5,7 @@ published Source-A corpus by "size"). Loads a Harbor job via `source.load_job`,
 judges each trajectory BLIND with the same durable judge (`metawork.judge`), then
 joins the outcome metadata back for analysis.
 
-Output: results/metawork/judged/judged_harbor_<job>__<judge_model>.parquet
+Output: results/metawork/judged/v1_fixed/judged_harbor_<job>__<judge_model>.parquet
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ async def judge_harbor_job(
     task: str | None = None,
     concurrency: int = 8,
     results_dir: Path | str = "results",
-    jobs_dir: Path | str = "results/metawork/harbor_jobs",
+    jobs_dir: Path | str = "results/metawork/trajectories/harbor",
     limit: int | None = None,
     keep_prose: bool = True,
 ) -> pd.DataFrame:
@@ -78,7 +78,7 @@ async def judge_harbor_job(
     # job — give it a distinct name so it never clobbers the full parquet.
     if limit is not None:
         suffix += f"_limit{limit}"
-    out_path = (results_dir / "metawork" / "judged"
+    out_path = (results_dir / "metawork" / "judged" / "v1_fixed"
                 / f"judged_harbor_{job}__{judge_model_label}{suffix}.parquet")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out.to_parquet(out_path)

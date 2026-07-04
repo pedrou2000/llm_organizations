@@ -1,6 +1,6 @@
 """Summary plots for the meta-work observational study (SWE-Marathon corpus).
 
-Reads results/metawork/judged/judged_l__sonnet-4.6.parquet (+ the two M replicates
+Reads results/metawork/judged/v1_fixed/judged_l__sonnet-4.6.parquet (+ the two M replicates
 for the reliability panel) and produces the figures that tell the story:
 
   1. confound_ladder        — the methodological heart: how the meta-work x
@@ -20,7 +20,7 @@ for the reliability panel) and produces the figures that tell the story:
 Output: results/metawork/plots/*.png
 
 Usage:
-    python scripts/metawork/plot.py
+    python scripts/metawork/judge/v1_fixed/plot.py
 """
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ MW = "overall_meta_work"
 
 
 def _load(results_dir: Path) -> pd.DataFrame:
-    df = pd.read_parquet(results_dir / "metawork" / "judged" / "judged_l__sonnet-4.6.parquet")
+    df = pd.read_parquet(results_dir / "metawork" / "judged" / "v1_fixed" / "judged_l__sonnet-4.6.parquet")
     df["partial"] = pd.to_numeric(df["partial"], errors="coerce")
     df = df.dropna(subset=[MW, "partial"]).copy()
     df["mw"] = df[MW].astype(float)
@@ -165,8 +165,8 @@ def plot_per_task_corr(df, plots_dir):
 # ---------- 5. judge reliability ----------
 
 def plot_reliability(results_dir, plots_dir):
-    p1 = results_dir / "metawork" / "judged" / "judged_m__sonnet-4.6.parquet"
-    p2 = results_dir / "metawork" / "judged" / "judged_mrep2__sonnet-4.6.parquet"
+    p1 = results_dir / "metawork" / "judged" / "v1_fixed" / "judged_m__sonnet-4.6.parquet"
+    p2 = results_dir / "metawork" / "judged" / "v1_fixed" / "judged_mrep2__sonnet-4.6.parquet"
     if not (p1.exists() and p2.exists()):
         print("  (skipping reliability: need both M replicates)")
         return
@@ -219,7 +219,7 @@ def main():
     ap.add_argument("--results-dir", default="results")
     args = ap.parse_args()
     results_dir = Path(args.results_dir)
-    plots_dir = results_dir / "metawork" / "plots"
+    plots_dir = results_dir / "metawork" / "judged" / "plots"
 
     df = _load(results_dir)
     print(f"loaded {len(df)} judged trajectories -> plotting to {plots_dir}/")

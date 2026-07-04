@@ -1,41 +1,13 @@
-"""Stage A of the task-adaptive meta-work judge: synthesize a rubric.
-
-Given ONLY a task specification (what the agent saw at t=0 — blind to the
-reference solution, tests, or any trajectory), an expert LLM produces a
-task-specific rubric: the five fixed spine dimensions (+ up to a few task-unique
-extras), each with an `importance` (1-10, normalized to weights afterward), a
-`target_level` (the calibration anchor), and a fixed non-saturable 0-10 anchor
-scale. See rubric_prompt.md for the full instrument spec.
-
-Mirrors the `v1_fixed.judge` call pattern (pinned model, single-shot, no tools),
-but emits standardized JSON (brace-matched out of the reply, not regex-scraped)
-and retries on a truncated/malformed reply. Never raises — a persistent failure
-yields `{"rubric": None, "error": ...}`.
+"""Pure helpers for rubric handling: constants, JSON extraction, schema
+validation, and importance->weight normalization. No LLM / IO.
 """
 from __future__ import annotations
 
 import json
 import re
-from pathlib import Path
-
-from claude_agent_sdk import (
-    AssistantMessage,
-    ClaudeAgentOptions,
-    TextBlock,
-    query,
-)
-
-from common.models import MODELS
-
-# The rubric synthesizer is a reasoning-heavy job (design a measuring
-# instrument), so default to a strong model. Overridable per call.
-DEFAULT_RUBRIC_MODEL_LABEL = "opus-4.8"
-
-_PROMPT_PATH = Path(__file__).with_name("rubric_prompt.md")
-RUBRIC_SYSTEM_PROMPT = _PROMPT_PATH.read_text()
 
 # The fixed 0-10 anchor levels every dimension defines (the non-saturable scale;
-# see rubric_prompt.md). Public: consumers (scorer, printers) key off these.
+# see prompt.md). Consumers (scorer, printers) key off these.
 ANCHOR_LEVELS = ("0", "3", "5", "8", "10")
 
 # The five universal spine dimensions, always present, in this order. Derived
@@ -49,10 +21,6 @@ SPINE_IDS = (
     "adaptation_correction",
 )
 MAX_EXTRA_DIMENSIONS = 5
-
-# How much of the model's raw reply we keep in the result (for debugging a
-# malformed rubric). The full reply is only used for parsing, then discarded.
-_RAW_TEXT_KEEP = 4000
 
 # Opening fence of a ```json block; from there we brace-match to find the object
 # (a non-greedy regex mis-bounds on nested braces / trailing prose).
@@ -89,7 +57,7 @@ def _balanced_object(text: str, start: int) -> str | None:
     return None
 
 
-def _extract_json(text: str) -> dict | None:
+def extract_json(text: str) -> dict | None:
     """Pull the rubric JSON out of the model's reply.
 
     Tries the object right after a ```json fence first, then a bare
@@ -186,89 +154,3 @@ def normalized_weights(rubric: dict) -> list[float]:
     if total <= 0:
         return [0.0 for _ in imps]
     return [i / total for i in imps]
-
-
-# ---------- LLM synthesis ----------
-
-
-def _rubric_options(model_label: str) -> ClaudeAgentOptions:
-    return ClaudeAgentOptions(
-        model=MODELS[model_label],
-        setting_sources=[],
-        strict_mcp_config=True,
-        mcp_servers={},
-        allowed_tools=[],
-        permission_mode="bypassPermissions",
-        system_prompt=RUBRIC_SYSTEM_PROMPT,
-        max_turns=1,
-    )
-
-
-async def _one_call(prompt: str, model_label: str) -> tuple[str, float]:
-    """One rubric-synth LLM call. Returns (reply_text, cost_usd). Raises on
-    API error (the caller decides whether to retry)."""
-    final_text, cost = "", 0.0
-    async for msg in query(prompt=prompt, options=_rubric_options(model_label)):
-        if isinstance(msg, AssistantMessage):
-            for blk in msg.content:
-                if isinstance(blk, TextBlock):
-                    final_text += blk.text
-        else:
-            tc = getattr(msg, "total_cost_usd", None)
-            if tc is not None:
-                cost = tc
-    return final_text, cost
-
-
-async def synthesize_rubric(
-    task_spec: str,
-    model_label: str = DEFAULT_RUBRIC_MODEL_LABEL,
-    max_attempts: int = 3,
-) -> dict:
-    """Synthesize a meta-work rubric from a task specification (Stage A).
-
-    Retries up to `max_attempts` on an API error or a JSON parse failure
-    (rubric synthesis is a long structured generation that occasionally comes
-    back truncated/malformed). A rubric that parses but has schema problems is
-    returned as-is (not retried) so the caller can inspect them. Never raises.
-
-    Returns a dict with:
-        rubric        parsed rubric dict, or None on failure
-        validation    list of schema problems (empty if clean)
-        raw_text      the model's reply (truncated for storage)
-        cost_usd      total call cost across attempts
-        error         None on success, else a short reason
-        attempts      how many LLM calls were made
-    """
-    if not isinstance(task_spec, str) or not task_spec.strip():
-        return {"rubric": None, "validation": ["empty_task_spec"], "raw_text": "",
-                "cost_usd": 0.0, "error": "empty_task_spec", "attempts": 0}
-
-    prompt = f"TASK SPECIFICATION:\n\n{task_spec}"
-    total_cost = 0.0
-    last_error = "no_attempt"
-    last_raw = ""
-    for attempt in range(1, max_attempts + 1):
-        try:
-            final_text, cost = await _one_call(prompt, model_label)
-            total_cost += cost
-        except Exception as e:
-            last_error = f"{type(e).__name__}: {e}"
-            continue  # transient API error — retry
-        last_raw = final_text
-        rubric = _extract_json(final_text)
-        if rubric is None:
-            last_error = "json_parse_failed"
-            continue  # malformed/truncated — retry
-        problems = validate_rubric(rubric)
-        return {
-            "rubric": rubric,
-            "validation": problems,
-            "raw_text": final_text.strip()[:_RAW_TEXT_KEEP],
-            "cost_usd": total_cost,
-            "error": None if not problems else f"schema_problems: {len(problems)}",
-            "attempts": attempt,
-        }
-
-    return {"rubric": None, "validation": [last_error], "raw_text": last_raw.strip()[:_RAW_TEXT_KEEP],
-            "cost_usd": total_cost, "error": last_error, "attempts": max_attempts}

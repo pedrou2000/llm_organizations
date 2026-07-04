@@ -15,5 +15,5 @@ the blind judge flattener in `metawork.harbor.source`.
     format  — display formatting (the one place raw values become strings).
     server  — FastAPI app (routing only: gallery + detail pages).
 
-Launch: python scripts/metawork/viz.py [--port 8010]
+Launch: python scripts/metawork/trajectories/viz.py [--port 8010]
 """

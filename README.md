@@ -78,16 +78,16 @@ and the exact upstream commit pins.
 ```bash
 # Generate a Harbor trial (GPT-5.5 × excel-clone). Needs Docker + the harness above.
 # Wrap in `sg docker -c "..."` if your shell predates docker-group membership.
-scripts/metawork/run_trial.sh my_job_name
+scripts/metawork/trajectories/run_trial.sh my_job_name
 
 # Score our own trajectories with the blind meta-work judge (Source B — durable path)
-python scripts/metawork/judge_trajectories.py --job my_job_name --judge-model opus-4.8
+python scripts/metawork/judge/v1_fixed/judge_harbor.py --job my_job_name --judge-model opus-4.8
 #   --task excel-clone     filter to one task
 #   --parity               published-parity flattening (drop prose) for head-to-head
 #   --limit N              cheap probe over first N trajectories (writes a _limitN parquet)
 
 # Plots for the observational study
-python scripts/metawork/plot.py
+python scripts/metawork/judge/v1_fixed/plot.py
 ```
 
 The judge is **blind** (sees only the flattened trajectory text, never the model

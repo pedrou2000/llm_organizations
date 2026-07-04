@@ -8,9 +8,9 @@ Sizes mirror the harvest:  s=20, m=100, l=full(~1300).
 Cost ladder: start with --size s (cheap), read the result, then scale.
 
 Usage:
-    python scripts/metawork/published/judge.py --size s
-    python scripts/metawork/published/judge.py --size m --concurrency 16
-    python scripts/metawork/published/judge.py --size l   # full corpus
+    python scripts/metawork/judge/v1_fixed/judge_published.py --size s
+    python scripts/metawork/judge/v1_fixed/judge_published.py --size m --concurrency 16
+    python scripts/metawork/judge/v1_fixed/judge_published.py --size l   # full corpus
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def parse_args():
 async def main():
     args = parse_args()
     lim = f"_limit{args.limit}" if args.limit is not None else ""
-    out_path = (Path(args.results_dir) / "metawork" / "judged"
+    out_path = (Path(args.results_dir) / "metawork" / "judged" / "v1_fixed"
                 / f"judged_{args.size}__{args.judge_model}{lim}.parquet")
     if out_path.exists() and not args.force:
         print(f"skipping: {out_path} already exists (use --force to re-judge)")

@@ -27,7 +27,7 @@ SITE = "https://swe-marathon.vercel.app"
 BUNDLE_PATH = "/assets/index-Csg-aQzw.js"   # pinned bundle hash (update if site rebuilds)
 
 # Where harvested artifacts live (under the standard results/ root).
-DEFAULT_CACHE = Path("results/metawork/trajectories")
+DEFAULT_CACHE = Path("results/metawork/trajectories/published/raw")
 
 
 # ---------- download helpers ----------
