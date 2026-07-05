@@ -41,9 +41,14 @@ def parse_args():
     ap.add_argument("--dim-concurrency", type=int, default=8,
                     help="inner: dimension judges per trajectory (default: 8)")
     ap.add_argument("--all", action="store_true",
-                    help="score EVERY trajectory, not just 1-per-cell")
+                    help="score EVERY trajectory in each cell, not just 1-per-cell "
+                         "(needed for a within-(task,model) control)")
+    ap.add_argument("--models", nargs="+", default=None,
+                    help="restrict to these model names (e.g. 'GPT-5.5' 'DeepSeek V4 Pro')")
+    ap.add_argument("--no-skip-existing", action="store_true",
+                    help="re-score trajectories even if a score.json is already on disk")
     ap.add_argument("--limit", type=int, default=None,
-                    help="score only the first N cells (cheap probe)")
+                    help="score only the first N trajectories (cheap probe)")
     ap.add_argument("--results-dir", default="results")
     ap.add_argument("--force", action="store_true",
                     help="re-score even if the output parquet exists")
@@ -68,7 +73,8 @@ async def main():
         rubric_model=rubric_model, score_model=score_model,
         concurrency=args.concurrency, dim_concurrency=args.dim_concurrency,
         results_dir=args.results_dir,
-        one_per_cell=not args.all, limit=args.limit,
+        one_per_cell=not args.all, models=args.models,
+        skip_existing=not args.no_skip_existing, limit=args.limit,
     )
 
 

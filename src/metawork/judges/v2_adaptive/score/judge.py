@@ -11,6 +11,8 @@ None and an `error`, so the aggregate can record it and move on.
 """
 from __future__ import annotations
 
+import asyncio
+
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
@@ -29,6 +31,13 @@ DEFAULT_SCORE_MODEL_LABEL = "opus-4.8"
 # A pure runaway backstop — exploration is otherwise unbounded (thoroughness
 # over speed). A judge that needs anywhere near this many turns is misbehaving.
 MAX_JUDGE_TURNS = 1000
+
+# Wall-clock ceiling on one agentic judge run. The SDK query occasionally hangs
+# indefinitely (no message ever arrives); without this a single stuck judge
+# blocks the whole batch (gather waits for all). A healthy judge finishes in
+# ~1-3 min, so 10 min is a generous "it's stuck" threshold — on timeout we raise,
+# the retry loop re-attempts once, then records an error rather than hanging.
+JUDGE_TIMEOUT_S = 600
 
 # Read-only exploration surface: the judge inspects the trajectory file, never
 # mutates anything. (No Bash — Read/Grep/Glob is enough to skim + search + read.)
@@ -50,22 +59,30 @@ def _judge_options(system_prompt: str, cwd: str, model_label: str) -> ClaudeAgen
 
 
 async def _run(system_prompt: str, cwd: str, model_label: str) -> tuple[str, float, int]:
-    """Run the agentic judge to completion. Returns (final_text, cost, turns)."""
-    final_text, cost, turns = "", 0.0, 0
+    """Run the agentic judge to completion. Returns (final_text, cost, turns).
+
+    Bounded by JUDGE_TIMEOUT_S: the SDK query can hang indefinitely, so we cap
+    the whole exploration and raise TimeoutError if it stalls (the caller retries
+    then records an error, rather than blocking the batch forever)."""
     kickoff = ("Explore the trajectory file and grade your dimension. "
                "When done, output only your verdict JSON.")
-    async for msg in query(prompt=kickoff,
-                           options=_judge_options(system_prompt, cwd, model_label)):
-        if isinstance(msg, AssistantMessage):
-            turns += 1
-            for blk in msg.content:
-                if isinstance(blk, TextBlock):
-                    final_text += blk.text
-        else:
-            tc = getattr(msg, "total_cost_usd", None)
-            if tc is not None:
-                cost = tc
-    return final_text, cost, turns
+
+    async def _consume() -> tuple[str, float, int]:
+        final_text, cost, turns = "", 0.0, 0
+        async for msg in query(prompt=kickoff,
+                               options=_judge_options(system_prompt, cwd, model_label)):
+            if isinstance(msg, AssistantMessage):
+                turns += 1
+                for blk in msg.content:
+                    if isinstance(blk, TextBlock):
+                        final_text += blk.text
+            else:
+                tc = getattr(msg, "total_cost_usd", None)
+                if tc is not None:
+                    cost = tc
+        return final_text, cost, turns
+
+    return await asyncio.wait_for(_consume(), timeout=JUDGE_TIMEOUT_S)
 
 
 async def score_dimension(

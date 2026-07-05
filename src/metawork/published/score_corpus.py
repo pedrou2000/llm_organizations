@@ -57,6 +57,33 @@ def _task_spec(task: str) -> str:
     return p.read_text() if p.exists() else ""
 
 
+def _summary_from_disk(tree_dir: Path) -> dict | None:
+    """Rebuild a `summary_row()`-shaped dict from a persisted score.json, so an
+    already-scored trajectory can be reused without re-invoking the judge.
+    Returns None if there's no valid score.json yet."""
+    import json
+    sp = tree_dir / "score.json"
+    if not sp.is_file():
+        return None
+    try:
+        d = json.loads(sp.read_text())
+    except Exception:
+        return None
+    if d.get("overall_gap") is None:          # incomplete/failed tree — rescore
+        return None
+    row = {"overall_gap": d.get("overall_gap"),
+           "overall_observed": d.get("overall_observed"),
+           "task_specific_gap": d.get("task_specific_gap"),
+           "cost_usd": d.get("cost_usd", 0.0),
+           "n_errors": len(d.get("errors") or [])}
+    for dim in d.get("dimensions", []):
+        pref = dim["id"] if dim.get("spine") else f"extra__{dim['id']}"
+        row[f"{pref}__observed"] = dim.get("observed_level")
+        row[f"{pref}__target"] = dim.get("target_level")
+        row[f"{pref}__gap"] = dim.get("gap")
+    return row
+
+
 async def _rubric_for_task(task: str, model_label: str,
                            cache: dict[str, Rubric]) -> Rubric | None:
     """Synthesize (once) and cache the rubric for a task. None on failure."""
@@ -82,18 +109,25 @@ async def score_published_corpus(
     dim_concurrency: int = 8,
     results_dir: Path | str = "results",
     one_per_cell: bool = True,
+    models: list[str] | None = None,
+    skip_existing: bool = True,
     limit: int | None = None,
 ) -> pd.DataFrame:
     """Score the published corpus with the v2 adaptive judge.
 
-    `one_per_cell` selects the balanced 1-per-(model,task) grid (default).
-    `concurrency` bounds how many trajectories score at once; each fans out
-    `dim_concurrency` dimension judges internally. Task specs must exist under
-    vendor/swe-marathon/tasks/<task>/instruction.md.
+    `one_per_cell` selects the balanced 1-per-(model,task) grid (default); set
+    False to score ALL trajectories in every cell (needed for a within-cell
+    control that removes task AND model at once). `models` restricts to a subset
+    of model names. `skip_existing` reuses any per-trajectory score.json already
+    on disk (so re-runs / overlaps with the grid don't re-pay). `concurrency`
+    bounds how many trajectories score at once; each fans out `dim_concurrency`
+    dimension judges internally.
     """
     results_dir = Path(results_dir)
     harvest = pd.read_parquet(
         results_dir / "metawork" / "trajectories" / "published" / f"harvest_{size}.parquet")
+    if models:
+        harvest = harvest[harvest["model"].isin(models)].copy()
     grid = _one_per_cell(harvest) if one_per_cell else harvest.copy()
     if limit is not None:
         grid = grid.head(limit).copy()
@@ -117,14 +151,20 @@ async def score_published_corpus(
                / "experiments" / f"published_{tag}")
     scores_root = exp_dir / "scores"
 
+    def _meta(row: pd.Series) -> dict:
+        return {"id": row["id"], "task": row["task"],
+                **{k: row.get(k) for k in _META_KEYS}}
+
     async def score_one(row: pd.Series) -> dict:
         rubric = rubric_cache.get(row["task"])
         if rubric is None:
-            return {"id": row["id"], "task": row["task"],
-                    **{k: row.get(k) for k in _META_KEYS},
-                    "cost_usd": 0.0, "n_errors": 1,
-                    "overall_gap": None, "overall_observed": None,
-                    "error": "no_rubric"}
+            return {**_meta(row), "cost_usd": 0.0, "n_errors": 1,
+                    "overall_gap": None, "overall_observed": None, "error": "no_rubric"}
+        # Reuse a prior scoring if its inspection tree is already on disk (e.g.
+        # overlap with the 1-per-cell grid) — same judge, same pinned rubric.
+        cached = _summary_from_disk(scores_root / str(row["id"]))
+        if skip_existing and cached is not None:
+            return {**_meta(row), **cached}
         # write flat_text to an isolated file; judge_metawork stages + scrubs it
         with tempfile.TemporaryDirectory(prefix="mw_pub_") as td:
             fpath = Path(td) / "trajectory.txt"
@@ -136,9 +176,7 @@ async def score_published_corpus(
                 concurrency=dim_concurrency,
                 out_dir=scores_root / str(row["id"]),
             )
-        return {"id": row["id"], "task": row["task"],
-                **{k: row.get(k) for k in _META_KEYS},
-                **score.summary_row()}
+        return {**_meta(row), **score.summary_row()}
 
     # --- Stage B: score every cell, bounded outer concurrency ---
     rows = await gather_with_progress(
