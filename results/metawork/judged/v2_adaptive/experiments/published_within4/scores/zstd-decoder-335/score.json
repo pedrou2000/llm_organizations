@@ -1,0 +1,271 @@
+{
+  "overall_gap": -2.5652173913043477,
+  "overall_observed": 5.478260869565218,
+  "task_specific_gap": null,
+  "spine_gaps": {
+    "orientation_research": 0,
+    "decomposition_milestones": -3,
+    "verification_strategy": -4,
+    "progress_monitoring": -3,
+    "adaptation_correction": -3
+  },
+  "dimensions": [
+    {
+      "id": "orientation_research",
+      "name": "Spec comprehension & format reconnaissance",
+      "spine": true,
+      "importance": 10,
+      "weight": 0.21739130434782608,
+      "target_level": 8,
+      "observed_level": 8,
+      "gap": 0,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "5-12",
+          "note": "Recon pass over environment, existing stubs, harness, Makefile, test.sh, and RFC intro before any implementation."
+        },
+        {
+          "steps": "14",
+          "note": "Targeted grep of the RFC for the exact structural field terms (Frame_Header_Descriptor, Window_Descriptor, Block_Header, Literals_Section_Header), aiming at the tricky field-definition areas."
+        },
+        {
+          "steps": "15-20",
+          "note": "Systematic sequential reading of the RFC body (lines 170-2455) in large chunks before writing the first patch at step 22 \u2014 reads the spec whole rather than reactively."
+        },
+        {
+          "steps": "28-35",
+          "note": "Hex-dumps (xxd/od) four distinct real .zst frames to cross-check actual byte layout against the spec reading \u2014 the hallmark of level 8."
+        },
+        {
+          "steps": "174-185",
+          "note": "Later grounding: constructs multi-frame and hand-built skippable-frame magic-byte probe inputs and od-dumps simple.zst to verify frame-level structure."
+        },
+        {
+          "steps": "40-170",
+          "note": "During the long audio/video debug loops the agent iterates on code but shows little visible re-consultation of the RFC per subsystem, which keeps it below the level-10 anchor."
+        }
+      ],
+      "reasoning": "The agent systematically read the RFC section-by-section up front (15-20), grepped for the precise structural fields (14), and cross-checked understanding against hex dumps of multiple real frames (28-35) plus hand-crafted probe inputs (174-185) \u2014 squarely the level-8 pattern of working the spec methodically and grounding it in observed bytes. It does not reach 10: there is no visible documented bit-level contract or explicit up-front reconciliation of ambiguous passages, and the extended debug loops rely more on code inspection than fresh RFC re-reads. Confidence is medium because the trajectory is an action-only log without the agent's prose or tool observations."
+    },
+    {
+      "id": "decomposition_milestones",
+      "name": "Subsystem decomposition & build ordering",
+      "spine": true,
+      "importance": 9,
+      "weight": 0.1956521739130435,
+      "target_level": 8,
+      "observed_level": 5,
+      "gap": -3,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "5-20",
+          "note": "Structured reconnaissance: reads scaffolding then RFC in sequential subsystem order (frame headers \u2192 blocks \u2192 literals \u2192 FSE \u2192 sequences), showing awareness of the subsystem hierarchy before coding."
+        },
+        {
+          "steps": "22",
+          "note": "The bulk of the decoder lands in one large apply_patch rather than as an incremental walking-skeleton (raw-first, verify, then FSE, then Huffman). This is a mostly-monolithic initial build, which is why it falls short of level 8."
+        },
+        {
+          "steps": "37-46 then 48-122",
+          "note": "Debugging proceeds input-by-input: first repetitive.zst (simplest), then a long run against audio.wav.zst (Huffman/FSE-heavy). Each input class is driven to correctness before moving on \u2014 implicit per-class 'this decodes now' checkpoints."
+        },
+        {
+          "steps": "154-173",
+          "note": "video.mp4.zst tackled as its own class after audio, continuing the complexity-ordered progression that maps onto subsystems."
+        },
+        {
+          "steps": "174-185",
+          "note": "Multi-frame (concatenated frames) and skippable-frame handling deliberately deferred to the end and tested separately \u2014 dependency-aware ordering (frame-level features last), but no explicit milestone/done-condition articulated in the log."
+        }
+      ],
+      "reasoning": "Behavior matches the level-5 anchor: a clear, sensible ordering of subsystem-bearing input classes (simple/RLE \u2192 FSE+Huffman \u2192 video \u2192 multi-frame/skippable last) each landed before the next, with implicit 'this class works now' checkpoints. It does not reach level 8 because the core was written as one large monolithic patch (step 22) rather than a verified walking-skeleton, and no explicit milestone structure or per-milestone done-signals are visible; it is clearly above level 3 since components were demonstrably testable in isolation via distinct inputs."
+    },
+    {
+      "id": "verification_strategy",
+      "name": "Differential-testing & correctness verification",
+      "spine": true,
+      "importance": 10,
+      "weight": 0.21739130434782608,
+      "target_level": 9,
+      "observed_level": 5,
+      "gap": -4,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "25",
+          "note": "Ran `which zstd || true` \u2014 probed for the reference binary; in the sealed env it was effectively unavailable, so no genuine `zstd -d` differential loop was ever set up."
+        },
+        {
+          "steps": "26,46,123,131,152,173,183",
+          "note": "Primary verification is the provided test.sh run repeatedly \u2014 the baseline sanity check, not a self-designed harness."
+        },
+        {
+          "steps": "49-172",
+          "note": "Long stretch of re-running the decoder against a single artifact (audio.wav.zst, later video.mp4.zst) \u2014 debugging iteration rather than deliberate coverage design; md5sum/stat used for individual output checks (e.g. step 38)."
+        },
+        {
+          "steps": "174-175,184-185",
+          "note": "Hand-crafted its own inputs beyond test.sh: a concatenated multi-frame file and a printf-authored skippable frame \u2014 deliberate targeting of two features not in the visible set, but only two, with no matrix-wide coverage or automated byte-exact comparison for them."
+        }
+      ],
+      "reasoning": "The agent leans on the provided test.sh as its main correctness check (anchor 3) but goes further by generating a couple of its own .zst inputs \u2014 a multi-frame concatenation and a hand-built skippable frame \u2014 to exercise features beyond the visible set, matching anchor 5. It does not build a deliberate feature-matrix differential harness or automated byte-exact comparison across FCS widths, literal/FSE modes, dictionary or treeless cases (anchor 8), and lacks a working `zstd -d` reference for true differential testing. This places the observed behavior at level 5."
+    },
+    {
+      "id": "progress_monitoring",
+      "name": "Feature-coverage tracking & stuck detection",
+      "spine": true,
+      "importance": 8,
+      "weight": 0.17391304347826086,
+      "target_level": 7,
+      "observed_level": 4,
+      "gap": -3,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "26,46,123,131,152,173,183",
+          "note": "Repeatedly re-runs /app/test.sh as the recurring progress checkpoint, treating it as the main progress signal \u2014 implicit tracking that partly conflates 'test.sh passes' with progress."
+        },
+        {
+          "steps": "49-122",
+          "note": "~35 consecutive edit->make->run cycles all against the SAME input (audio.wav.zst) with no switch to a minimal/narrower reproduction; hallmark of near-circular debugging and weak stuck-detection."
+        },
+        {
+          "steps": "98,110,120,149,170",
+          "note": "Occasional breaks from the retry loop to inspect code (nl/grep for fprintf/decode-fail) \u2014 a mild diagnostic tactic-switch, but thin and reactive rather than a deliberate re-diagnosis."
+        },
+        {
+          "steps": "174-175,184-185",
+          "note": "After stabilizing visible inputs, does construct extra tests for untested corners (multi-frame concatenation, skippable frames) beyond test.sh \u2014 showing some coverage awareness, though dictionaries/treeless/RLE never clearly exercised."
+        },
+        {
+          "steps": "1-327",
+          "note": "No explicit coverage map or checklist (no TodoWrite) anywhere; done-vs-remaining across the large feature matrix is never reconciled explicitly."
+        }
+      ],
+      "reasoning": "The agent tracks progress only implicitly \u2014 leaning on test.sh as a proxy and working input-by-input \u2014 with no explicit coverage map of the feature matrix (anchor 3 territory). A very long single-input retry loop (steps 49-122) shows weak, delayed stuck-detection, though it did periodically break to inspect code and eventually probed untested corners like multi-frame and skippable frames (steps 174-175), which lifts it slightly above a pure 3. It falls short of anchor 5's clear checklist and prompt same-input failure recognition, landing at 4."
+    },
+    {
+      "id": "adaptation_correction",
+      "name": "Root-causing & course-correction on mismatches",
+      "spine": true,
+      "importance": 9,
+      "weight": 0.1956521739130435,
+      "target_level": 8,
+      "observed_level": 5,
+      "gap": -3,
+      "confidence": "low",
+      "evidence": [
+        {
+          "steps": "28-35",
+          "note": "Probes multiple real .zst inputs with xxd/od hex dumps before/while debugging, grounding fixes in actual bytes rather than guessing."
+        },
+        {
+          "steps": "38-39",
+          "note": "After a decode attempt, inspects output size, md5, and od hex of first 32 bytes \u2014 a byte-level comparison of decoded output, the raw material for locating divergence."
+        },
+        {
+          "steps": "48-122",
+          "note": "~35 patch\u2192make\u2192run iterations on a single input (audio.wav.zst), interleaved with code reads (nl at 98,110) and grep for error points (120). Shows localization and fixing, but heavy single-input churn with no visible first-divergence-offset tracing or RFC re-read between edits \u2014 closer to iterative localize-and-fix than disciplined root-causing."
+        },
+        {
+          "steps": "174-175",
+          "note": "Builds minimal isolated test inputs (concatenated multi-frame; hand-crafted skippable-frame magic via printf) to exercise specific features \u2014 good isolation practice."
+        },
+        {
+          "steps": "154-169",
+          "note": "Repeats a focused patch/build/run debug loop on video.mp4.zst, indicating per-input targeting but again without evident spec re-reading during debugging."
+        }
+      ],
+      "reasoning": "The agent localizes bugs to the right area and fixes them with byte-level output inspection, input hex-probing, code inspection, and minimal isolated feature tests \u2014 matching anchor 5. It falls short of anchor 8 because there is no visible use of first-divergence byte offsets to pinpoint the faulty field, and RFC reads are front-loaded rather than revisited during long single-input debug loops that suggest some iterative symptom-chasing. Confidence is low because the trajectory file records only tool-call one-liners, with no reasoning prose or observation outputs to confirm the quality of root-cause reasoning between edits."
+    }
+  ],
+  "rubric": {
+    "task_read": "A very long-horizon, high-complexity task: implement a complete Zstandard decoder in C purely from RFC 8878, producing byte-identical output to `zstd -d` across the full feature matrix (frame headers, three block types, all literal encodings, FSE in four modes, Huffman with FSE weights + treeless reuse, sequence machinery with repeat-offset history, multi-frame and dictionary frames). Difficulty comes from a dense binary spec that must be understood precisely, many interdependent subsystems that must be built in the right order, and correctness that is bit-exact and unforgiving \u2014 a single misread field breaks everything downstream. This warrants heavy, sustained meta-work: careful spec orientation, layered decomposition with per-component checks, a differential-testing verification strategy against the reference tool, tight progress tracking across dozens of features, and disciplined course-correction when a mis-decoded field surfaces far from its cause.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "name": "Spec comprehension & format reconnaissance",
+        "description": "Reading and correctly internalizing the relevant sections of RFC 8878 before and while implementing each subsystem, and probing real .zst inputs to ground understanding.",
+        "why_it_matters": "The only source of truth is a dense binary-format spec; every field width, bit order, and table-construction rule must be read precisely. Acting from a half-remembered mental model of zstd (rather than the actual RFC text) produces subtly wrong decoders that fail bit-exact comparison in ways that are extremely hard to diagnose later.",
+        "importance": 10,
+        "target_level": 8,
+        "anchors": {
+          "0": "Starts coding from prior/assumed knowledge of zstd; never meaningfully consults the RFC or inspects sample inputs.",
+          "3": "Skims the RFC for the current feature only, reactively, and often mis-reads bit-ordering / field-width details; no examination of actual byte layouts.",
+          "5": "Reads the relevant RFC section before implementing each subsystem and gets most field definitions right; occasionally dumps bytes of a sample frame to confirm structure.",
+          "8": "Systematically works the RFC section by section, extracts the exact rules for tricky areas (FSE table build, Huffman weight decoding, repeat-offset LL=0 case, window/FCS field widths) and cross-checks them against hex dumps of real frames before trusting the implementation.",
+          "10": "Builds a precise, verified model of the whole format up front and deepens it per subsystem: reconciles ambiguous spec passages against observed bytes, anticipates the interactions (treeless literal reuse, dictionary-preloaded entropy/offset state) from the reading, and documents the exact bit-level contract so later debugging traces cleanly back to spec clauses."
+        },
+        "spine": true
+      },
+      {
+        "id": "decomposition_milestones",
+        "name": "Subsystem decomposition & build ordering",
+        "description": "Breaking the decoder into an ordered hierarchy of independently-checkable components (frame parse \u2192 block dispatch \u2192 literals \u2192 FSE \u2192 Huffman \u2192 sequences \u2192 offset history \u2192 dictionaries) with an explicit done-condition for each.",
+        "why_it_matters": "The subsystems have hard dependencies (sequences need FSE; Huffman literals need FSE weights; dictionaries preload entropy state). Building in the wrong order, or as one monolithic push, means nothing is verifiable until everything is done \u2014 fatal on a task this size.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "Treats it as one undifferentiated coding effort; no visible sub-goals or ordering.",
+          "3": "Vague ordering in the agent's head; components entangled so none can be tested alone; milestones are just 'write more code'.",
+          "5": "Clear list of the major subsystems tackled in a sensible dependency order, each landed before moving on, with an implicit 'this feature works now' checkpoint.",
+          "8": "Explicit milestone structure that respects dependencies and picks a walking-skeleton path (e.g. raw blocks / raw literals end-to-end first, then FSE, then Huffman, then sequences, then dictionaries), each milestone with a concrete done-signal (a class of inputs now decodes correctly).",
+          "10": "A layered plan that sequences by both dependency and diagnostic isolation \u2014 earliest features chosen to make later ones debuggable, each subsystem given its own smallest-possible test input, and the plan re-ordered deliberately when an unexpected dependency (e.g. offset history spanning blocks) is discovered."
+        },
+        "spine": true
+      },
+      {
+        "id": "verification_strategy",
+        "name": "Differential-testing & correctness verification",
+        "description": "Deliberately designing how correctness is checked \u2014 differential comparison against `zstd -d`, per-subsystem and per-input-shape test coverage, byte-exact diffs \u2014 beyond the provided `test.sh` sanity check.",
+        "why_it_matters": "Correctness is bit-exact and the visible `test.sh` covers only a handful of inputs; the grading set exercises every feature. An agent that leans only on test.sh will believe it is done while whole feature classes (8-byte FCS, treeless literals, dictionary frames, overlapping match copies) are silently broken.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "No verification beyond 'it compiles'; or runs the binary and eyeballs output.",
+          "3": "Relies solely on the provided test.sh; treats passing it as done.",
+          "5": "Generates a few of its own .zst inputs and diffs decoder output against `zstd -d`, covering the common cases beyond test.sh.",
+          "8": "Constructs a deliberate differential-testing harness that feeds many inputs \u2014 spanning the feature matrix (each FCS width, each block type, each literal/FSE mode, multi-frame, checksum, dictionary) \u2014 through both its decoder and `zstd -d` and compares byte-for-byte, using targeted inputs to isolate which subsystem fails.",
+          "10": "Systematically enumerates the full feature matrix from the RFC and engineers inputs (or corpora) that exercise each edge \u2014 overlapping copies, LL=0 repeat-offset, treeless reuse across blocks, dictionary-preloaded state, skippable frames \u2014 with automated byte-exact comparison, adds regression cases as bugs are found, and treats an unexplained mismatch as a first-class signal rather than noise."
+        },
+        "spine": true
+      },
+      {
+        "id": "progress_monitoring",
+        "name": "Feature-coverage tracking & stuck detection",
+        "description": "Maintaining an accurate picture of which features work vs remain across the large matrix, and recognizing when debugging a single mismatch has become circular.",
+        "why_it_matters": "With dozens of interacting features and bit-exact grading, it is easy to lose the plot \u2014 to think the decoder is largely done when several feature classes are untested, or to burn the horizon re-debugging one FSE bug in circles. Accurate self-assessment decides whether the horizon is spent well.",
+        "importance": 8,
+        "target_level": 7,
+        "anchors": {
+          "0": "No sense of overall coverage; declares done with large feature classes never exercised; or loops on one bug indefinitely with no awareness.",
+          "3": "Tracks progress only implicitly; conflates 'test.sh passes' with 'complete'; little awareness of being stuck.",
+          "5": "Keeps a rough checklist of features done vs remaining and notices when repeatedly failing on the same input.",
+          "8": "Maintains an explicit, accurate coverage map of the feature matrix (what is verified, what is untested, what is failing), and when a bug resists, steps back to re-diagnose rather than retrying the same fix.",
+          "10": "Continuously reconciles claimed-done against verified-done across the whole matrix, flags untested corners honestly, detects circular debugging early and switches diagnostic tactic (narrower input, hex-level trace, re-read spec clause), keeping an accurate done-vs-remaining picture across the entire long build."
+        },
+        "spine": true
+      },
+      {
+        "id": "adaptation_correction",
+        "name": "Root-causing & course-correction on mismatches",
+        "description": "When decoded output diverges from the reference, tracing the byte-exact mismatch back to the true faulty subsystem and revising the implementation/understanding, rather than patching symptoms or pressing on.",
+        "why_it_matters": "In a streaming binary decoder, an error in one field (e.g. window size, an FSE state update) manifests as garbage far downstream. Effective decoders demand disciplined root-cause tracing and willingness to revisit the spec and revise earlier code when an assumption is falsified.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "Ignores mismatches, or keeps changing code randomly hoping output aligns; barrels ahead on falsified assumptions.",
+          "3": "Patches the visible symptom (e.g. special-cases one input) without finding the real cause; fragile fixes accumulate.",
+          "5": "Localizes most bugs to the right subsystem and fixes them, occasionally re-reading the spec when a fix doesn't hold.",
+          "8": "Uses the byte offset of first divergence and hex-level tracing to pinpoint the responsible field/state, re-reads the governing RFC clause, and corrects the underlying logic \u2014 including revising earlier subsystems when a new bug reveals a wrong earlier assumption.",
+          "10": "Treats each mismatch as a hypothesis-driven investigation: isolates with a minimal input, traces state to the exact bit, distinguishes a local bug from a mis-modeled contract, and refactors the design when a root cause invalidates prior structure \u2014 converging reliably rather than accumulating band-aids across the whole feature set."
+        },
+        "spine": true
+      }
+    ]
+  },
+  "cost_usd": 0.75995715,
+  "errors": []
+}

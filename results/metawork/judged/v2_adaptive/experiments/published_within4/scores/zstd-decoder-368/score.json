@@ -1,0 +1,267 @@
+{
+  "overall_gap": -2.391304347826087,
+  "overall_observed": 5.6521739130434785,
+  "task_specific_gap": null,
+  "spine_gaps": {
+    "orientation_research": 0,
+    "decomposition_milestones": -2,
+    "verification_strategy": -5,
+    "progress_monitoring": -3,
+    "adaptation_correction": -2
+  },
+  "dimensions": [
+    {
+      "id": "orientation_research",
+      "name": "Spec comprehension & format reconnaissance",
+      "spine": true,
+      "importance": 10,
+      "weight": 0.21739130434782608,
+      "target_level": 8,
+      "observed_level": 8,
+      "gap": 0,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "4-40",
+          "note": "Systematic section-by-section RFC reading (frame header, blocks, FSE \u00a74.1.1, Huffman \u00a74.2, sequences, Appendix A) before implementing, interleaved with hex dumps of real frames (simple.zst, img.png.zst); step 27 decodes simple.zst's header field-by-field from actual bytes."
+        },
+        {
+          "steps": "58",
+          "note": "Decodes literal-section-header byte 0x40 bit-by-bit against observed bytes, correcting an earlier misreading of the type/size_format bit layout \u2014 cross-checking spec against a real frame."
+        },
+        {
+          "steps": "68",
+          "note": "Traces real initial FSE states (LL=29, Off=26, ML=31) from repetitive.zst and compares the state\u2192symbol mapping to RFC Appendix A (state 26 should map to sym 16, not 10), diagnosing a table-construction misread against ground-truth bytes."
+        },
+        {
+          "steps": "87, 109",
+          "note": "Ties FSE-construction bugs to exact RFC clauses: '-1 symbols scanned in natural order' and the spreading step formula (tableSize>>1)+(tableSize>>3)+3, showing clause-level extraction of tricky rules."
+        },
+        {
+          "steps": "60-105",
+          "note": "Repeated but somewhat circular FSE debugging with multiple incorrect hardcoded-table transcriptions shows the up-front FSE model was NOT precise/verified, keeping it below the level-10 anchor."
+        }
+      ],
+      "reasoning": "The agent works the RFC systematically section by section before each subsystem, extracts exact rules for the tricky areas (FSE construction, offset formula, literal-header bit layout), and repeatedly cross-checks them against hex dumps and traced values from real frames (steps 27, 58, 68) \u2014 the defining behavior of the level-8 anchor. It falls short of 9-10 because the FSE spreading algorithm was genuinely mis-read up front and required many chaotic debugging rounds and wrong table transcriptions to reconcile, rather than a precise verified model documented in advance."
+    },
+    {
+      "id": "decomposition_milestones",
+      "name": "Subsystem decomposition & build ordering",
+      "spine": true,
+      "importance": 9,
+      "weight": 0.1956521739130435,
+      "target_level": 8,
+      "observed_level": 6,
+      "gap": -2,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "41-42",
+          "note": "Established a walking-skeleton checkpoint: verified raw-block files (simple.zst, img.png.zst) decode correctly before moving to compressed blocks \u2014 an implicit 'this feature works now' milestone respecting the frame\u2192block\u2192raw ordering."
+        },
+        {
+          "steps": "50, 78, 89",
+          "note": "Repeatedly enumerated the compressed-block subsystems in dependency order (literals header \u2192 Huffman tree \u2192 FSE tables \u2192 sequences \u2192 repeat offsets \u2192 dictionaries), showing a clear mental decomposition, but framed as 'implement remaining features' rather than discrete milestones with done-conditions."
+        },
+        {
+          "steps": "83, 89, 101",
+          "note": "Deliberately picked repetitive.zst as the smallest failing compressed input (predefined modes + raw literals) to land first \u2014 genuine diagnostic isolation / smallest-test-input selection characteristic of the high anchor."
+        },
+        {
+          "steps": "67, 81, 108, 109",
+          "note": "Built dedicated standalone tools (trace.c, parse_tables.c, verify_fse.c) to test FSE table construction in isolation from the full decoder \u2014 per-subsystem test harnessing."
+        },
+        {
+          "steps": "30, 50, 60, 70, 78, 89, 97-98, 102, 110",
+          "note": "Rather than landing milestones incrementally, the agent repeatedly rewrote the entire zstd_decompress.c from scratch and churned ~50 steps on a single FSE-table bug, undercutting the 'each milestone landed before moving on' quality and never reaching Huffman/dictionary subsystems in ordered fashion."
+        }
+      ],
+      "reasoning": "The agent clearly understood the subsystem dependency chain and pursued a walking-skeleton path (raw blocks verified first, then the smallest predefined-mode compressed input), and isolated FSE construction with dedicated trace tools \u2014 behaviors that reach toward anchor 8. However, the milestones remained implicit rather than an explicit structure with concrete per-milestone done-conditions, and the process devolved into repeated monolithic full-file rewrites and a prolonged stall on one bug, so 'each landed before moving on' is only weakly satisfied. That places it above anchor 5 but short of 8, at a 6."
+    },
+    {
+      "id": "verification_strategy",
+      "name": "Differential-testing & correctness verification",
+      "spine": true,
+      "importance": 10,
+      "weight": 0.21739130434782608,
+      "target_level": 9,
+      "observed_level": 4,
+      "gap": -5,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "11-13, 37-38, 77",
+          "note": "Repeatedly searched for a zstd/zstdcat binary and attempted apt-get install zstd to enable differential comparison; never found one, so byte-exact comparison against `zstd -d` was never realized \u2014 the intent for differential testing existed but was unfulfilled."
+        },
+        {
+          "steps": "56, 59, 79, 90, 99",
+          "note": "Leaned on the provided /app/test.sh as the main correctness gate across the run, re-running it after fixes."
+        },
+        {
+          "steps": "76, 81, 91, 94, 95, 108",
+          "note": "Wrote custom C diagnostic programs (analyze.c, parse_tables.c, verify_fse.c, etc.) to inspect block structure and cross-check generated FSE tables against RFC Appendix A golden values, isolating which subsystem was faulty \u2014 verification beyond test.sh, but tied to the RFC rather than a reference decoder."
+        },
+        {
+          "steps": "104, 611",
+          "note": "Searched for .ref/.expected reference files; none existed, and no own-generated .zst corpus was created. All checks stayed on the handful of provided test_artifacts, focused on repetitive.zst; no feature-matrix coverage (FCS widths, treeless, dictionary) was exercised."
+        }
+      ],
+      "reasoning": "The agent clearly went beyond the level-3 anchor of relying solely on test.sh: it built self-authored diagnostic C harnesses and cross-checked internal FSE tables against RFC Appendix A golden values to isolate failing subsystems. But it never achieved the level-5 behavior of diffing decoder output against `zstd -d` on new inputs \u2014 the reference binary was unavailable and it could not generate its own .zst corpus, so all verification stayed confined to the provided handful of files and one target file. This places it between the 3 and 5 anchors, at 4."
+    },
+    {
+      "id": "progress_monitoring",
+      "name": "Feature-coverage tracking & stuck detection",
+      "spine": true,
+      "importance": 8,
+      "weight": 0.17391304347826086,
+      "target_level": 7,
+      "observed_level": 4,
+      "gap": -3,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "56-57",
+          "note": "Ran test.sh, correctly registered '2 of 6 tests pass (raw blocks only)' and that compressed blocks fail \u2014 a rough but real done-vs-remaining picture early on."
+        },
+        {
+          "steps": "78,108",
+          "note": "Enumerated remaining feature classes (Huffman literals, FSE table descriptions, repeat modes, dictionary support) \u2014 a rough coverage checklist, honestly flagging untested corners, though never converted into an explicit maintained map."
+        },
+        {
+          "steps": "83",
+          "note": "Deliberately narrowed focus to repetitive.zst 'since it's the smallest failing compressed file' \u2014 a genuine stuck-response tactic (narrower input)."
+        },
+        {
+          "steps": "84,87,106,109,110",
+          "note": "Repeatedly declared 'found the root cause' / 'identified all the bugs' while oscillating between hardcoding tables and using fse_build; inaccurate self-assessment \u2014 thinks it's nearly done multiple times without it being true."
+        },
+        {
+          "steps": "60-112",
+          "note": "Entire second half is a circular loop on the same FSE/offset-table bug and one input, with ~7 wholesale file rewrites that lose accumulated state; verbalizes being stuck ('many rounds', 'extensive debugging') but never escapes the loop or gets a compressed file passing."
+        }
+      ],
+      "reasoning": "The agent clears anchor 3 \u2014 it does not conflate test.sh with completeness, it tracks per-file pass/fail, keeps a rough feature list, and explicitly notices it is stuck ('many rounds of debugging'), even switching to narrower inputs and trace programs (touches of anchor 8). But it never breaks the circular debugging: it re-declares 'root cause found' 5+ times and rewrites the whole decoder wholesale repeatedly, oscillating between the same two fixes without converging, so its self-assessment of progress is unreliable and its coverage picture never becomes explicit or accurate. This sits between the 3 and 5 anchors, held back from 5 by the inaccurate 'almost done' self-appraisal \u2014 I place it at 4."
+    },
+    {
+      "id": "adaptation_correction",
+      "name": "Root-causing & course-correction on mismatches",
+      "spine": true,
+      "importance": 9,
+      "weight": 0.1956521739130435,
+      "target_level": 8,
+      "observed_level": 6,
+      "gap": -2,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "67-69",
+          "note": "Wrote standalone trace programs and pinpointed the exact mismatch: generated offset FSE table maps state 26\u2192sym10 while RFC Appendix A requires sym16 \u2014 genuine state-level root-cause tracing back to the FSE-table subsystem."
+        },
+        {
+          "steps": "87, 109",
+          "note": "Identified concrete algorithmic root causes in FSE table construction (-1 symbol placement order; LCG spreading using +1 instead of step formula) by re-reading RFC \u00a74.1.1, revising an earlier subsystem rather than patching a symptom."
+        },
+        {
+          "steps": "98",
+          "note": "Traced a downstream garbage failure to backward-bit-reader being initialized with the whole block instead of just the sequence-data slice \u2014 correct localization of a cross-field state bug."
+        },
+        {
+          "steps": "109-110",
+          "note": "Immediately contradicts itself: step 109 declares the LCG spreading bug the root cause and fixes it, step 110 reverses to 'fse_build is buggy, hardcode tables instead' \u2014 oscillation without confirming which fix holds."
+        },
+        {
+          "steps": "30-110",
+          "note": "~18 full-file rewrites and repeated flip-flopping between hardcoding predefined tables vs fse_build, with recurring 'found the critical bug' claims that don't converge; ends (step 112) still failing all compressed-block tests."
+        }
+      ],
+      "reasoning": "The agent's diagnostic technique is strong \u2014 it uses trace programs and hex/state-level comparison against RFC Appendix A to pinpoint the responsible field (state 26\u2192sym mismatch), re-reads the governing \u00a74.1.1 clause, and revises earlier subsystems (FSE build, bit-reader init), which matches the level-8 description. But convergence discipline is weak: it repeatedly rewrites the whole file, flip-flops on the same FSE hypothesis (steps 109 vs 110), and declares 'the critical bug' many times without a fix that holds, accumulating band-aids rather than converging. That blend of genuine root-cause localization with poor convergence places it above anchor 5 but well short of anchor 8, at 6."
+    }
+  ],
+  "rubric": {
+    "task_read": "A very long-horizon, high-complexity task: implement a complete Zstandard decoder in C purely from RFC 8878, producing byte-identical output to `zstd -d` across the full feature matrix (frame headers, three block types, all literal encodings, FSE in four modes, Huffman with FSE weights + treeless reuse, sequence machinery with repeat-offset history, multi-frame and dictionary frames). Difficulty comes from a dense binary spec that must be understood precisely, many interdependent subsystems that must be built in the right order, and correctness that is bit-exact and unforgiving \u2014 a single misread field breaks everything downstream. This warrants heavy, sustained meta-work: careful spec orientation, layered decomposition with per-component checks, a differential-testing verification strategy against the reference tool, tight progress tracking across dozens of features, and disciplined course-correction when a mis-decoded field surfaces far from its cause.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "name": "Spec comprehension & format reconnaissance",
+        "description": "Reading and correctly internalizing the relevant sections of RFC 8878 before and while implementing each subsystem, and probing real .zst inputs to ground understanding.",
+        "why_it_matters": "The only source of truth is a dense binary-format spec; every field width, bit order, and table-construction rule must be read precisely. Acting from a half-remembered mental model of zstd (rather than the actual RFC text) produces subtly wrong decoders that fail bit-exact comparison in ways that are extremely hard to diagnose later.",
+        "importance": 10,
+        "target_level": 8,
+        "anchors": {
+          "0": "Starts coding from prior/assumed knowledge of zstd; never meaningfully consults the RFC or inspects sample inputs.",
+          "3": "Skims the RFC for the current feature only, reactively, and often mis-reads bit-ordering / field-width details; no examination of actual byte layouts.",
+          "5": "Reads the relevant RFC section before implementing each subsystem and gets most field definitions right; occasionally dumps bytes of a sample frame to confirm structure.",
+          "8": "Systematically works the RFC section by section, extracts the exact rules for tricky areas (FSE table build, Huffman weight decoding, repeat-offset LL=0 case, window/FCS field widths) and cross-checks them against hex dumps of real frames before trusting the implementation.",
+          "10": "Builds a precise, verified model of the whole format up front and deepens it per subsystem: reconciles ambiguous spec passages against observed bytes, anticipates the interactions (treeless literal reuse, dictionary-preloaded entropy/offset state) from the reading, and documents the exact bit-level contract so later debugging traces cleanly back to spec clauses."
+        },
+        "spine": true
+      },
+      {
+        "id": "decomposition_milestones",
+        "name": "Subsystem decomposition & build ordering",
+        "description": "Breaking the decoder into an ordered hierarchy of independently-checkable components (frame parse \u2192 block dispatch \u2192 literals \u2192 FSE \u2192 Huffman \u2192 sequences \u2192 offset history \u2192 dictionaries) with an explicit done-condition for each.",
+        "why_it_matters": "The subsystems have hard dependencies (sequences need FSE; Huffman literals need FSE weights; dictionaries preload entropy state). Building in the wrong order, or as one monolithic push, means nothing is verifiable until everything is done \u2014 fatal on a task this size.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "Treats it as one undifferentiated coding effort; no visible sub-goals or ordering.",
+          "3": "Vague ordering in the agent's head; components entangled so none can be tested alone; milestones are just 'write more code'.",
+          "5": "Clear list of the major subsystems tackled in a sensible dependency order, each landed before moving on, with an implicit 'this feature works now' checkpoint.",
+          "8": "Explicit milestone structure that respects dependencies and picks a walking-skeleton path (e.g. raw blocks / raw literals end-to-end first, then FSE, then Huffman, then sequences, then dictionaries), each milestone with a concrete done-signal (a class of inputs now decodes correctly).",
+          "10": "A layered plan that sequences by both dependency and diagnostic isolation \u2014 earliest features chosen to make later ones debuggable, each subsystem given its own smallest-possible test input, and the plan re-ordered deliberately when an unexpected dependency (e.g. offset history spanning blocks) is discovered."
+        },
+        "spine": true
+      },
+      {
+        "id": "verification_strategy",
+        "name": "Differential-testing & correctness verification",
+        "description": "Deliberately designing how correctness is checked \u2014 differential comparison against `zstd -d`, per-subsystem and per-input-shape test coverage, byte-exact diffs \u2014 beyond the provided `test.sh` sanity check.",
+        "why_it_matters": "Correctness is bit-exact and the visible `test.sh` covers only a handful of inputs; the grading set exercises every feature. An agent that leans only on test.sh will believe it is done while whole feature classes (8-byte FCS, treeless literals, dictionary frames, overlapping match copies) are silently broken.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "No verification beyond 'it compiles'; or runs the binary and eyeballs output.",
+          "3": "Relies solely on the provided test.sh; treats passing it as done.",
+          "5": "Generates a few of its own .zst inputs and diffs decoder output against `zstd -d`, covering the common cases beyond test.sh.",
+          "8": "Constructs a deliberate differential-testing harness that feeds many inputs \u2014 spanning the feature matrix (each FCS width, each block type, each literal/FSE mode, multi-frame, checksum, dictionary) \u2014 through both its decoder and `zstd -d` and compares byte-for-byte, using targeted inputs to isolate which subsystem fails.",
+          "10": "Systematically enumerates the full feature matrix from the RFC and engineers inputs (or corpora) that exercise each edge \u2014 overlapping copies, LL=0 repeat-offset, treeless reuse across blocks, dictionary-preloaded state, skippable frames \u2014 with automated byte-exact comparison, adds regression cases as bugs are found, and treats an unexplained mismatch as a first-class signal rather than noise."
+        },
+        "spine": true
+      },
+      {
+        "id": "progress_monitoring",
+        "name": "Feature-coverage tracking & stuck detection",
+        "description": "Maintaining an accurate picture of which features work vs remain across the large matrix, and recognizing when debugging a single mismatch has become circular.",
+        "why_it_matters": "With dozens of interacting features and bit-exact grading, it is easy to lose the plot \u2014 to think the decoder is largely done when several feature classes are untested, or to burn the horizon re-debugging one FSE bug in circles. Accurate self-assessment decides whether the horizon is spent well.",
+        "importance": 8,
+        "target_level": 7,
+        "anchors": {
+          "0": "No sense of overall coverage; declares done with large feature classes never exercised; or loops on one bug indefinitely with no awareness.",
+          "3": "Tracks progress only implicitly; conflates 'test.sh passes' with 'complete'; little awareness of being stuck.",
+          "5": "Keeps a rough checklist of features done vs remaining and notices when repeatedly failing on the same input.",
+          "8": "Maintains an explicit, accurate coverage map of the feature matrix (what is verified, what is untested, what is failing), and when a bug resists, steps back to re-diagnose rather than retrying the same fix.",
+          "10": "Continuously reconciles claimed-done against verified-done across the whole matrix, flags untested corners honestly, detects circular debugging early and switches diagnostic tactic (narrower input, hex-level trace, re-read spec clause), keeping an accurate done-vs-remaining picture across the entire long build."
+        },
+        "spine": true
+      },
+      {
+        "id": "adaptation_correction",
+        "name": "Root-causing & course-correction on mismatches",
+        "description": "When decoded output diverges from the reference, tracing the byte-exact mismatch back to the true faulty subsystem and revising the implementation/understanding, rather than patching symptoms or pressing on.",
+        "why_it_matters": "In a streaming binary decoder, an error in one field (e.g. window size, an FSE state update) manifests as garbage far downstream. Effective decoders demand disciplined root-cause tracing and willingness to revisit the spec and revise earlier code when an assumption is falsified.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "Ignores mismatches, or keeps changing code randomly hoping output aligns; barrels ahead on falsified assumptions.",
+          "3": "Patches the visible symptom (e.g. special-cases one input) without finding the real cause; fragile fixes accumulate.",
+          "5": "Localizes most bugs to the right subsystem and fixes them, occasionally re-reading the spec when a fix doesn't hold.",
+          "8": "Uses the byte offset of first divergence and hex-level tracing to pinpoint the responsible field/state, re-reads the governing RFC clause, and corrects the underlying logic \u2014 including revising earlier subsystems when a new bug reveals a wrong earlier assumption.",
+          "10": "Treats each mismatch as a hypothesis-driven investigation: isolates with a minimal input, traces state to the exact bit, distinguishes a local bug from a mis-modeled contract, and refactors the design when a root cause invalidates prior structure \u2014 converging reliably rather than accumulating band-aids across the whole feature set."
+        },
+        "spine": true
+      }
+    ]
+  },
+  "cost_usd": 1.7287534500000001,
+  "errors": []
+}

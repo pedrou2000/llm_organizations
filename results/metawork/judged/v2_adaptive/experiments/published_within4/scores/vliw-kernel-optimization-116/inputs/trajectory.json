@@ -1,0 +1,1455 @@
+[step 2] Bash: ls /app/
+    Analysis: Let me start by exploring the files in /app to understand the problem.
+Plan: First, examine the structure and contents of the relevant files.
+[step 2] Bash: cat /app/problem.py
+    Analysis: Let me start by exploring the files in /app to understand the problem.
+Plan: First, examine the structure and contents of the relevant files.
+[step 3] Bash: sed -n '160,400p' /app/problem.py
+    Analysis: Let me see the full problem.py and kernel.py.
+Plan: View the rest of problem.py (especially the simulator implementation) and kernel.py.
+[step 4] Bash: cat /app/kernel.py
+    Analysis: Now let's see the kernel.py and the rest of the load functions, plus tests.
+Plan: View kernel.py and test files.
+[step 5] Bash: sed -n '270,310p' /app/problem.py
+    Analysis: Now let me look at the load function more fully and tests.
+Plan: Look at remaining load functions, scratch_const definition, and tests.
+[step 5] Bash: cat /app/run_tests.sh
+    Analysis: Now let me look at the load function more fully and tests.
+Plan: Look at remaining load functions, scratch_const definition, and tests.
+[step 5] Bash: cat /app/tests/submission_tests.py
+    Analysis: Now let me look at the load function more fully and tests.
+Plan: Look at remaining load functions, scratch_const definition, and tests.
+[step 6] Bash: bash /app/run_tests.sh 2>&1 | tail -30
+    Analysis: I need a cycle count below 1250. The forest_height=10 has 2^11-1=2047 nodes, with batch_size=256, rounds=16 (4096 iterations total). Each iteration does:
+1. Load idx, val from memory
+2. Load node_val = mem[forest_values_p + idx]
+3. XOR val ^ node_val
+4. Hash (6 stages, 3 ops each = 18 alu ops)
+5. Compute next_idx = 2*idx + (1 if even else 2)
+6. Wrap: 0 if >= n_nodes
+7. Store back
+
+To get below 1250 cycles for 4096 iterations, we need to use SIMD with VLEN=8. With batch_size=256, we hav
+[step 7] Bash: wc -l /app/kernel.py
+    Analysis: Confirmed baseline at 147734 cycles. Now let me write an optimized kernel. Key strategy:
+
+1. **Keep batch state in scratch** (256 indices + 256 values) - eliminates 2*256*16 = 8192 loads/stores per round
+2. **Vectorize** with VLEN=8: 32 vectors per round  
+3. **Software pipeline** to fill slots
+4. For the gather (mem[forest_values_p + idx]), use scalar load_offset on vector address - 8 loads per vector (4 cycles with 2 load slots)
+5. **Special case round 0** - all idx=0, load once and 
+[step 8] Bash: cat > /app/kernel.py << 'PYEOF'
+    Analysis: Let me write a new optimized kernel. I'll aim for a vectorized approach with careful slot packing.
+Plan: Replace kernel.py with a vectorized version. I'll start with a clean implementation that:
+1. Allocates scratch for batch indices/values (256 each)
+2. Initial vload all batch state
+3. Loop unrolled per round
+4. Per round: batch processed in vectors of 8
+5. Uses load_offset for gather, valu for hash
+6. Final vstore
+
+Let me write it out.
+[step 9] Bash: wc -l /app/kernel.py
+    Analysis: Heredoc seems to have completed but I'm not sure if the cat command finished. Let me check.
+Plan: Run the tests to see how this initial vectorized version performs.
+[step 9] Bash: tail -20 /app/kernel.py
+    Analysis: Heredoc seems to have completed but I'm not sure if the cat command finished. Let me check.
+Plan: Run the tests to see how this initial vectorized version performs.
+[step 10] Bash: bash /app/run_tests.sh 2>&1 | tail -50
+    Analysis: File is written. Let me run the tests to see how it does.
+Plan: Run tests.
+[step 11] Bash: python3 -c "
+    Analysis: Out of scratch. I have too many full-batch arrays. Let me reduce: I don't need separate parity, next_idx, wrap_mask arrays—I can reuse temps. Also t1, t2 can reuse some.
+
+Let me count: idx_arr=256, val_arr=256, nv_arr=256, ga_arr=256, t1=256, t2=256, parity=256, next_idx=256, wrap_mask=256 = 9*256 = 2304. Way too much.
+
+I need to share. Let me reduce to:
+- idx_arr, val_arr (persistent state): 256 + 256 = 512  
+- nv_arr: 256
+- t1_arr, t2_arr: 256+256 = 512
+- That's 1280. Plus constants 
+[step 12] Bash: grep -n 't1_arr\|t2_arr\|nv_arr\|ga_arr\|parity_arr\|next_idx_arr\|wrap_mask_arr' /app/kernel.py
+    Analysis: Let me edit the kernel to reduce scratch usage by sharing temp arrays.
+Plan: Use sed to replace the temp allocation section.
+[step 13] Bash: python3 << 'EOF'
+    Analysis: Let me consolidate temps. I'll rewrite to use shared temp arrays. Let me edit the relevant lines using a Python script.
+Plan: Use Python to rewrite the file inline.
+[step 14] Bash: bash /app/run_tests.sh 2>&1 | tail -50
+    Analysis: Let me run tests.
+Plan: Test correctness.
+[step 15] Bash: python3 << 'EOF'
+    Analysis: Correctness fails. Let me debug. There's likely a packing issue (RAW/WAR dependency violations within bundles), or maybe my modulo operation is off (val_arr += 2 - parity might overflow weirdly).
+
+Wait - the simulator reads ALL inputs first, then writes effects at end of cycle. So within a bundle, ops read OLD values. So we MUST not pack a write of X with a read of X (if we wanted the new value).
+
+But my packer prevents RAW (read-after-write) and WAR (write-after-read) within a bundle.
+[step 15] Bash: bash /app/run_tests.sh 2>&1 | tail -50
+    Analysis: Correctness fails. Let me debug. There's likely a packing issue (RAW/WAR dependency violations within bundles), or maybe my modulo operation is off (val_arr += 2 - parity might overflow weirdly).
+
+Wait - the simulator reads ALL inputs first, then writes effects at end of cycle. So within a bundle, ops read OLD values. So we MUST not pack a write of X with a read of X (if we wanted the new value).
+
+But my packer prevents RAW (read-after-write) and WAR (write-after-read) within a bundle.
+[step 16] Bash: grep -n 'vselect' /app/kernel.py
+    Analysis: Got 4807 cycles, 30.7x speedup. Need < 1250 (~117x). 
+
+Let me analyze where cycles are going. Per round: 32 vectors * 8 loads = 256 loads / 2 = 128 cycles for loads. 16 rounds * 128 = 2048 cycles minimum just for gather loads. So even if everything else is free, we'd get 2048+ cycles. But we got 4807, so loads are pipeline-filling more than that. The valu work is also taking time.
+
+Let me think about reducing per-round work:
+
+Current per-round work per batch elem:
+- 1 gather (load_offs
+[step 17] Bash: python3 << 'EOF'
+    Analysis: Let me make several improvements: replace vselect with multiply (mask * next_idx), and special-case round 0.
+Plan: Apply optimizations.
+[step 17] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Let me make several improvements: replace vselect with multiply (mask * next_idx), and special-case round 0.
+Plan: Apply optimizations.
+[step 18] Bash: grep -n 'round_bundles = self.pack' /app/kernel.py
+    Analysis: Down to 4407. Let me now pack across rounds (one big slot list).
+Plan: Pack all rounds together so cross-round dependencies allow filling slots better. Currently each round is packed independently. Let me change that.
+[step 18] Bash: grep -n 'for r in range(rounds)' /app/kernel.py
+    Analysis: Down to 4407. Let me now pack across rounds (one big slot list).
+Plan: Pack all rounds together so cross-round dependencies allow filling slots better. Currently each round is packed independently. Let me change that.
+[step 19] Bash: sed -n '270,330p' /app/kernel.py
+    Analysis: Let me restructure: collect all slots from all rounds into one big list, then pack. This allows the packer to overlap operations across rounds.
+Plan: Use Python to refactor.
+[step 20] Bash: python3 << 'EOF'
+    Analysis: Let me refactor to pack all rounds together. I'll move the slots accumulation outside the for loop.
+Plan: Edit to accumulate all slots, then pack once.
+[step 20] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Let me refactor to pack all rounds together. I'll move the slots accumulation outside the for loop.
+Plan: Edit to accumulate all slots, then pack once.
+[step 21] Bash: sed -n '50,150p' /app/kernel.py
+    Analysis: Cross-round packing only saves 15 cycles. Issue: the next round depends on the previous round's idx_arr, which is the LAST writer in each round. So packing across rounds doesn't help much because of serial dependency.
+
+The REAL bottleneck appears to be the gather load section. Let me look at the slot ordering - the way slots are listed, the packer might pack inefficiently. The current order: ga compute (32 valu), then 256 loads, then val^=node_val (32 valu), then hash, etc.
+
+Issue: my 
+[step 22] Bash: cat > /app/kernel.py << 'PYEOF'
+    Analysis: I need a proper data-flow scheduler. Let me rewrite the packer to:
+1. Build a dependency graph from slots
+2. Each cycle, find all ready slots (no unsatisfied dependencies)
+3. Pick from ready slots respecting engine slot limits and intra-bundle conflicts
+
+This requires more substantial changes. Let me rewrite the kernel file completely with a better packer.
+Plan: Rewrite kernel.py with a proper list scheduler.
+[step 23] Bash: bash /app/run_tests.sh 2>&1 | tail -15
+    Analysis: Let me run tests.
+Plan: Test.
+[step 24] Bash: python3 << 'EOF'
+    Analysis: Need to remove td_arr (unused since hash needs t1, t2). Wait, hash uses t1 (= tc_arr) and t2 (= td_arr). I added td_arr to allow t1/t2 separate from next_idx (= tc_arr). Hmm, that conflicts. Let me think.
+
+Within hash phase, t1 and t2 are temporaries. Outside hash, tc is next_idx. So they can share if we don't need them simultaneously - but in the schedule, hash and idx update happen in different rounds normally. Cross-round if a previous round's idx update is concurrent with current r
+[step 24] Bash: bash /app/run_tests.sh 2>&1 | tail -15
+    Analysis: Need to remove td_arr (unused since hash needs t1, t2). Wait, hash uses t1 (= tc_arr) and t2 (= td_arr). I added td_arr to allow t1/t2 separate from next_idx (= tc_arr). Hmm, that conflicts. Let me think.
+
+Within hash phase, t1 and t2 are temporaries. Outside hash, tc is next_idx. So they can share if we don't need them simultaneously - but in the schedule, hash and idx update happen in different rounds normally. Cross-round if a previous round's idx update is concurrent with current r
+[step 25] Bash: python3 << 'EOF'
+    Analysis: 4234 cycles, 34.9x. The list scheduler helped but not enough. Let me check if it correctly schedules. The issue might be that hash dependencies are serialized.
+
+Let me check what bundles look like - maybe some engines are underutilized.
+Plan: Profile what's happening - count how many cycles are filled with what.
+[step 26] Bash: python3 << 'EOF'
+    Analysis: Average load slots is 0.99/bundle - meaning load engine is severely underutilized! It can do 2 per cycle. valu is at 3.15/6.
+
+4181 load slots / 2 = 2090 minimum cycles. We have 4234 bundles. So loads alone could potentially take ~2090 cycles if we could fill 2 per bundle. 
+
+Why is load only 1/bundle? Probably because load_offset writes to nv_arr+offset, and we need to wait for ga_arr+offset to be written. Each ga is computed with ONE valu op (8 elements at a time). So all 8 ga values f
+[step 27] Bash: python3 << 'EOF'
+    Analysis: I see! Each bundle has only 1 slot. The list scheduler is finding only 1 ready slot per cycle. This is because the slot order (round 1's gather addrs are listed sequentially) and the dependencies make only one ready at a time. Let me look at this carefully.
+
+Wait, the bundles show 1 slot each but there should be many ready. Hmm. Let me check the bundle order. Actually #76 might be after a series of broadcasts. The init phase had vbroadcasts. Let me check after that.
+
+Actually each bund
+[step 28] Bash: python3 << 'EOF'
+    Analysis: I see only 1 load per bundle consistently. valu averages 3+. The load engine is the bottleneck and we're not packing 2 per bundle. Why?
+
+The issue: load_offset writes to `nv_arr + off` where nv_arr is the same `ta_arr` for all vectors. Two load_offsets to the same vector with different offsets should pack. Two load_offsets to DIFFERENT vectors with same nv_arr (ta_arr) base also write to different addresses since v0 has nv_arr+0..7 and v1 has nv_arr+8..15. Different addresses. Should p
+[step 28] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: I see only 1 load per bundle consistently. valu averages 3+. The load engine is the bottleneck and we're not packing 2 per bundle. Why?
+
+The issue: load_offset writes to `nv_arr + off` where nv_arr is the same `ta_arr` for all vectors. Two load_offsets to the same vector with different offsets should pack. Two load_offsets to DIFFERENT vectors with same nv_arr (ta_arr) base also write to different addresses since v0 has nv_arr+0..7 and v1 has nv_arr+8..15. Different addresses. Should p
+[step 29] Bash: python3 << 'EOF'
+    Analysis: Big improvement! Down to 2412 cycles, 61x. Need < 1250 (118x). 
+
+Let me check engine utilization now.
+Plan: Check utilization and identify next bottleneck.
+[step 30] Bash: grep -n 'for stage_i' /app/kernel.py
+    Analysis: Both load (1.73/2) and valu (5.53/6) are highly utilized. We're nearly resource-bound. To reduce further, we need to reduce TOTAL ops.
+
+4181 load slots / 2 = 2091 cycles theoretical for loads.
+13329 valu slots / 6 = 2222 cycles theoretical for valu.
+Max(2091, 2222) = 2222. We're at 2412. So tight!
+
+To reduce, we need to reduce ops per round:
+- Currently 18 hash valu + 1 (xor) + 1 (ga) + 6 (idx update) = 26 valu/vector
+- 32 vectors * 26 = 832 valu/round * 16 = 13312. Matches.
+
+Reduction
+[step 31] Bash: sed -n '320,360p' /app/kernel.py
+    Analysis: Let me edit the kernel to apply multiple optimizations:
+1. Hash stages: fuse + + << with multiply_add
+2. Idx update: fuse parity+1 then multiply_add for 2*idx + (parity+1)
+3. Eliminate ga compute by maintaining idx_with_fvp
+Plan: Edit kernel.py.
+[step 32] Bash: python3 << 'EOF'
+    Analysis: Let me rewrite the per-round body with optimizations.
+Plan: Replace the body with optimized version.
+[step 32] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Let me rewrite the per-round body with optimizations.
+Plan: Replace the body with optimized version.
+[step 33] Bash: python3 << 'EOF'
+    Analysis: Out of scratch by 7. Let me free c1_v_addr (unused, only mul_v_addr is needed since I reuse v1_addr).
+Plan: Remove the unused c1_v_addr.
+[step 33] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Out of scratch by 7. Let me free c1_v_addr (unused, only mul_v_addr is needed since I reuse v1_addr).
+Plan: Remove the unused c1_v_addr.
+[step 34] Bash: python3 << 'EOF'
+    Analysis: 2174 cycles. Need < 1250. Let me also fuse idx update and eliminate ga compute.
+
+For idx update: next_idx = 2*idx + 1 + parity = idx*2 + (parity+1). So:
+- p1 = parity + 1 (1 valu)
+- next_idx = multiply_add(idx, 2_v, p1) (1 valu)
+That's 2 valu instead of 3 (<<, +1, +parity).
+
+Actually multiply_add takes 3 inputs all read separately (a,b,c). So next_idx = idx * 2_v + (parity_plus_1). That's 1 multiply_add op.
+
+Wait we can also fuse: parity = val & 1. parity+1 = (val&1)+1. Need 2 ops to c
+[step 34] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: 2174 cycles. Need < 1250. Let me also fuse idx update and eliminate ga compute.
+
+For idx update: next_idx = 2*idx + 1 + parity = idx*2 + (parity+1). So:
+- p1 = parity + 1 (1 valu)
+- next_idx = multiply_add(idx, 2_v, p1) (1 valu)
+That's 2 valu instead of 3 (<<, +1, +parity).
+
+Actually multiply_add takes 3 inputs all read separately (a,b,c). So next_idx = idx * 2_v + (parity_plus_1). That's 1 multiply_add op.
+
+Wait we can also fuse: parity = val & 1. parity+1 = (val&1)+1. Need 2 ops to c
+[step 35] Bash: python3 << 'EOF'
+    Analysis: No change at 2174. Let me check stats.
+Plan: Check if the change took effect.
+[step 36] Bash: grep -n 'for r in range(rounds)' /app/kernel.py
+    Analysis: Excellent: load is now 1.92/2 = 96% utilized. valu dropped to 4.48/6 with fewer total ops (9748). 
+4183 loads / 2 = 2092 cycles theoretical for loads. We're at 2174 - very close to load-bound!
+
+Loads are THE bottleneck now. Need to reduce loads. Round 0 is the obvious one.
+
+Let me implement round 0 specially: 1 load + broadcast.
+Plan: Special case round 0 to use a single load + broadcast.
+[step 36] Bash: sed -n '316,360p' /app/kernel.py
+    Analysis: Excellent: load is now 1.92/2 = 96% utilized. valu dropped to 4.48/6 with fewer total ops (9748). 
+4183 loads / 2 = 2092 cycles theoretical for loads. We're at 2174 - very close to load-bound!
+
+Loads are THE bottleneck now. Need to reduce loads. Round 0 is the obvious one.
+
+Let me implement round 0 specially: 1 load + broadcast.
+Plan: Special case round 0 to use a single load + broadcast.
+[step 37] Bash: python3 << 'EOF'
+    Analysis: Let me modify the round 0 specially. Round 0: idx=0 for all, so 1 load and broadcast.
+Plan: Wrap the gather logic in a conditional - if r==0, do single load + broadcast.
+[step 37] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Let me modify the round 0 specially. Round 0: idx=0 for all, so 1 load and broadcast.
+Plan: Wrap the gather logic in a conditional - if r==0, do single load + broadcast.
+[step 38] Bash: cat /app/kernel.py | wc -l
+    Analysis: Slight gain. Round 0 was already overlapping with other things. Now I need bigger savings. Let me think about rounds 1-7.
+
+Wait, problem is that initial idx values come from `inp.indices` which is all 0 (Input.generate sets all indices to 0). So round 0 always has idx=0. Confirmed.
+
+For round 1: idx_1 in {1, 2}, depending on parity of val_1 = hash(val_0 ^ forest[0]). Since each batch elem has its own val_0, parity_1 differs across lanes.
+
+Let me implement special rounds 1-7 with select
+[step 39] Bash: sed -n '270,320p' /app/kernel.py
+    Analysis: Let me look at the current build_kernel and refactor to use idx_addr.
+Plan: Make focused edits to switch idx state to idx_addr.
+[step 40] Bash: python3 << 'EOF'
+    Analysis: Let me make a more substantial edit. I'll add const2_v setup and replace the round body with idx_addr-based logic.
+Plan: Edit to use idx_addr.
+[step 41] Bash: sed -n '326,400p' /app/kernel.py
+    Analysis: Now I need to actually transform idx_arr -> idx_addr_arr after broadcasts, and rewrite the main round loop. Let me do that.
+Plan: Replace the main round loop body.
+[step 42] Bash: sed -n '395,420p' /app/kernel.py
+    Analysis: Let me look at the structure. I'll rewrite the post-hash code block to use idx_addr.
+Plan: Refactor.
+[step 43] Bash: python3 << 'EOF'
+    Analysis: Let me apply a major rewrite. I'll convert everything to use idx_addr semantics.
+Plan: Edit:
+1. After vload of idx_arr, add fvp to convert to idx_addr (initial)  
+2. Remove ga compute - use idx_arr (now idx_addr) directly as gather address
+3. Change idx update to compute idx_addr_new directly
+[step 43] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Let me apply a major rewrite. I'll convert everything to use idx_addr semantics.
+Plan: Edit:
+1. After vload of idx_arr, add fvp to convert to idx_addr (initial)  
+2. Remove ga compute - use idx_arr (now idx_addr) directly as gather address
+3. Change idx update to compute idx_addr_new directly
+[step 44] Bash: python3 << 'EOF'
+    Analysis: Out of scratch by 1. Let me drop a few unused things. Maybe the per-vector ip_, vp_ ptrs (32 of each = 64).
+Plan: Reduce scratch usage. Remove tmp_const (alloc unnecessary).
+[step 45] Bash: python3 << 'EOF'
+    Analysis: zero_v is unused. Remove its 8-element alloc + broadcast for 8 elements savings.
+Plan: Remove zero_v.
+[step 45] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: zero_v is unused. Remove its 8-element alloc + broadcast for 8 elements savings.
+Plan: Remove zero_v.
+[step 46] Bash: python3 << 'EOF'
+    Analysis: Now correctness fails. Let me debug. The issue is likely in my idx_addr semantics.
+
+Wait - in round 0, my new code uses load (not load_offset) on forest_values_p_addr. After my change, idx_arr was supposed to be set to fvp (since orig idx = 0, idx_addr = fvp). The pre-loop transform: `idx_arr += fvp_v`. But in round 0, I don't use idx_arr. So that's fine.
+
+After round 0, the idx update uses `next_idx = mul_add(idx, 2, parity_p)` ...wait let me reread.
+
+New formula: 
+- parity = val & 1
+
+[step 46] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Now correctness fails. Let me debug. The issue is likely in my idx_addr semantics.
+
+Wait - in round 0, my new code uses load (not load_offset) on forest_values_p_addr. After my change, idx_arr was supposed to be set to fvp (since orig idx = 0, idx_addr = fvp). The pre-loop transform: `idx_arr += fvp_v`. But in round 0, I don't use idx_arr. So that's fine.
+
+After round 0, the idx update uses `next_idx = mul_add(idx, 2, parity_p)` ...wait let me reread.
+
+New formula: 
+- parity = val & 1
+
+[step 47] Bash: python3 << 'EOF'
+    Analysis: 2149. Tiny improvement. Hmm we removed 1 valu op per vector per round but didn't save many cycles, suggesting load is the bottleneck. Let me check stats.
+Plan: Check stats.
+[step 48] Bash: grep -n 'vp_\|val_ptrs' /app/kernel.py
+    Analysis: Loads are still the bottleneck: 3928/2 = 1964. We're at 2149. Loads are dominant.
+
+Loads = 3928 (mostly gathers + 256 init loads). 16 rounds * 256 = 4096 gather loads, but I have 3928. With round 0 saved 255 loads, so 16*256 - 255 = 3841. Plus init/setup loads. ~3928 makes sense.
+
+To reduce further, I need to do special rounds 1-7. But that's complex. Let me think simpler:
+
+What if we look at the actual data? In round k, each batch element's idx is determined by the first k bits of (va
+[step 49] Bash: python3 << 'EOF'
+    Analysis: Let me see the actual setup and rewrite to share ip and vp via a generation approach. Actually I think the simplest path is to be strategic about scratch usage. Let me dump current usage.
+Plan: Let me try a different approach: implement special rounds 1-3 (or however many fit) with the multiplex trick, while reducing scratch usage.
+
+Actually, let me first see what cycle budget we have if we focus on rounds 8-15 which always need 256 loads. That's 8 * 128 = 1024 cycles minimum. So we co
+[step 50] Bash: sed -n '230,290p' /app/kernel.py
+    Analysis: Init takes ~75 bundles. Hmm but loads are 1/bundle in init - each scratch_const ('add' which goes directly without packing) takes 1 bundle. There's a lot of those. Let me also check if these init loads are inside the bundle 0..9 stuff (they look like 1-load each).
+
+Actually scratch_const calls `self.add()` which adds an unpacked single-instruction bundle. These take 1 cycle each.
+
+Let me batch all those into a list_schedule call instead.
+Plan: Refactor: collect ALL init ops (consts, br
+[step 51] Bash: python3 << 'EOF'
+    Analysis: I see - the const inits and the loads of ptrs are done with self.add (raw), not list_scheduled. Let me restructure: do all init in one list_schedule call.
+
+More importantly though, the bottleneck is the round body. Let me focus on big wins. Try to implement special rounds 1+ with multiplexing.
+
+Actually let me try something simpler first: maybe scheduler ordering hurts. Let me REORDER the slots: put the longest dependency chain first.
+Plan: Let me try a different approach: replace the 
+[step 52] Bash: python3 << 'EOF'
+    Analysis: I see! Round 0 is mostly valu work (broadcasting + hash) at full 6/cycle, but loads are not happening. After round 0's valu (~30 cycles), then loads start? Let me see further.
+Plan: Look more.
+[step 53] Bash: python3 << 'EOF'
+    Analysis: In steady state we're achieving load=2/cycle, valu=4-5/cycle. Pretty close to load-bound.
+
+Let me commit to the special-rounds approach. I'll implement rounds 1-3 specially first (low complexity, big win) since they have very few unique values.
+
+Wait, here's a key observation. We are currently load-bound. Let me reduce loads aggressively.
+
+For round 1: 2 loads + 32 mul_adds vs 256 loads.
+For round 2: 4 loads + 64 mul_adds vs 256 loads.
+For round 3: 8 loads + 96 mul_adds vs 256 loads.
+F
+[step 53] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: In steady state we're achieving load=2/cycle, valu=4-5/cycle. Pretty close to load-bound.
+
+Let me commit to the special-rounds approach. I'll implement rounds 1-3 specially first (low complexity, big win) since they have very few unique values.
+
+Wait, here's a key observation. We are currently load-bound. Let me reduce loads aggressively.
+
+For round 1: 2 loads + 32 mul_adds vs 256 loads.
+For round 2: 4 loads + 64 mul_adds vs 256 loads.
+For round 3: 8 loads + 96 mul_adds vs 256 loads.
+F
+[step 54] Bash: python3 << 'EOF'
+    Analysis: No change. WAR was not the bottleneck. The DAG dependency tracking in `deps` already enforces WAR via reverse direction... let me check. 
+
+Actually looking at deps building:
+```
+for a in w:
+    if a in last_writer: deps[i].add(last_writer[a])
+    if a in last_readers: for j in last_readers[a]: deps[i].add(j)  # WAR
+```
+
+So deps already encode WAR. Plus dep tracking treats them as ordering constraints. So removing the bundle-check WAR doesn't help - the slot is still dependent on the pr
+[step 55] Bash: python3 << 'EOF'
+    Analysis: Let me actually try to allow WAR same-bundle properly. The way to do it: WAR doesn't create a hard dep but a 'soft' constraint - writer can be in same OR later bundle. Same achievable by: Don't add WAR to deps; instead, only check WAR within bundle (which I had).
+
+Wait but I removed the bundle-level WAR check. So now, without WAR deps and without WAR check in bundle: writer could go BEFORE reader. Bad.
+
+Let me add back the bundle-level WAR check (so writer and reader can be in SAME bun
+[step 55] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Let me actually try to allow WAR same-bundle properly. The way to do it: WAR doesn't create a hard dep but a 'soft' constraint - writer can be in same OR later bundle. Same achievable by: Don't add WAR to deps; instead, only check WAR within bundle (which I had).
+
+Wait but I removed the bundle-level WAR check. So now, without WAR deps and without WAR check in bundle: writer could go BEFORE reader. Bad.
+
+Let me add back the bundle-level WAR check (so writer and reader can be in SAME bun
+[step 56] Bash: python3 << 'EOF'
+    Analysis: No change because soft deps are decremented in same iteration, after which they enter ready. But the bundle is already being filled - they could be picked up in this bundle since they're added to ready during chosen loop.
+
+Wait - looking at the code: we iterate `chosen`, decrement, and add to `ready` immediately. But the bundle was already built and we're past the ready set picking. The added items don't enter the current bundle. They're for the NEXT bundle.
+
+To allow same-bundle: as w
+[step 56] Bash: grep -n 'soft_deps' /app/kernel.py | head -5
+    Analysis: No change because soft deps are decremented in same iteration, after which they enter ready. But the bundle is already being filled - they could be picked up in this bundle since they're added to ready during chosen loop.
+
+Wait - looking at the code: we iterate `chosen`, decrement, and add to `ready` immediately. But the bundle was already built and we're past the ready set picking. The added items don't enter the current bundle. They're for the NEXT bundle.
+
+To allow same-bundle: as w
+[step 57] Bash: sed -n '215,290p' /app/kernel.py
+    Analysis: Soft deps are in but no benefit. Now let me think about a different optimization.
+
+Let me look at what ACTUALLY ran. Per-round 134 cycles. Loads bound at 128. So overhead is ~6 cy/round.
+
+Is there a way to issue 2 loads per cycle WHILE doing valu? Yes - they're separate engines. So in steady state, both should run.
+
+OK let me try a completely different trick: PROCESS HALF BATCH PER CYCLE for load batches. With batch_size=256, n_vec=32. We have 16 'super-vector' units.
+
+Wait. Maybe REDU
+[step 58] Bash: python3 << 'EOF'
+    Analysis: Let me restructure to put EVERYTHING (consts, ptr loads, vloads) into one big init list_schedule. I'll need to change `add` calls to instead append to slots list.
+Plan: Refactor for batched init scheduling.
+[step 58] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Let me restructure to put EVERYTHING (consts, ptr loads, vloads) into one big init list_schedule. I'll need to change `add` calls to instead append to slots list.
+Plan: Refactor for batched init scheduling.
+[step 59] Bash: grep -n '# parity = val\|wrap_mask\|next_idx\|const2' /app/kernel.py | head -20
+    Analysis: Slight improvement to 2108. The init was packed better. Let me also pack the FINAL phase (vstores) into the main loop.
+
+Actually, the main loop already has vstore at the end. Let me check.
+
+Let me focus on the BIG win: implement special rounds 1-3 mux. Will it actually save?
+
+Looking at numbers more carefully:
+- Theoretical load bound: 1920 cy.
+- Theoretical valu bound: 1550 cy.
+- We're at 2108 cy.
+
+If I do mux for rounds 1-3 (saves 297 loads, adds 32+128+320 = 480 valu):
+- New loads: 
+[step 60] Bash: python3 << 'EOF'
+    Analysis: Let me look at the area to apply wrap-simp logic.
+Plan: I'll add a c_v constant for (1 - fvp) broadcast (which equals diff_simp = 2*idx_addr + (parity + 1 - fvp)). Wait, let me re-derive.
+
+With mask=1 always: idx_addr_new = next_idx_addr_pre = 2*idx_addr - fvp + 1 + parity = 2*idx_addr + (1 - fvp + parity).
+
+Let c1m_v = 1 - fvp (broadcast). Then idx_addr_new = 2*idx_addr + (parity + c1m_v) = mul_add(idx_addr, 2_v, p_plus_c1m) where p_plus_c1m = parity + c1m_v.
+
+Ops: parity = val & 1 (1
+[step 60] Bash: bash /app/run_tests.sh 2>&1 | tail -15
+    Analysis: Let me look at the area to apply wrap-simp logic.
+Plan: I'll add a c_v constant for (1 - fvp) broadcast (which equals diff_simp = 2*idx_addr + (parity + 1 - fvp)). Wait, let me re-derive.
+
+With mask=1 always: idx_addr_new = next_idx_addr_pre = 2*idx_addr - fvp + 1 + parity = 2*idx_addr + (1 - fvp + parity).
+
+Let c1m_v = 1 - fvp (broadcast). Then idx_addr_new = 2*idx_addr + (parity + c1m_v) = mul_add(idx_addr, 2_v, p_plus_c1m) where p_plus_c1m = parity + c1m_v.
+
+Ops: parity = val & 1 (1
+[step 61] Bash: python3 << 'EOF'
+    Analysis: Out of scratch by 1. Let me free scratch_const_v space - we don't need const2_v anymore (since we use simplified path with c1m_v).
+Plan: Remove const2_v.
+[step 61] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Out of scratch by 1. Let me free scratch_const_v space - we don't need const2_v anymore (since we use simplified path with c1m_v).
+Plan: Remove const2_v.
+[step 62] Bash: python3 << 'EOF'
+    Analysis: Hmm only saved 13 cycles - down to 2095. The wrap-simp didn't save much. Likely because we're load-bound, not valu-bound.
+
+Let me check stats now.
+Plan: Check stats and proceed to mux for round 11+.
+[step 63] Bash: grep -n 'if r == 0' /app/kernel.py
+    Analysis: Now load is at 1.87/2 = 94%, theoretical bound 1964 cy. We're at 2095 (6% over). Valu at 3.92/6 = 65%. Load is now solidly the bottleneck.
+
+3928 load slots, 1964 cy bound. 2095 actual. 7% overhead.
+
+To go below 1500 cycles we MUST cut loads in half. To go below 1250 we need < 2500 loads.
+
+3928 - 2500 = 1428 loads to cut. Need to mux at least rounds 1-5 to save ~1218.
+
+Let me implement special rounds 1-5 (and maybe 11-15 too) with VLOAD-based mux.
+
+Wait, currently 3928 loads. With round
+[step 64] Bash: python3 << 'EOF'
+    Analysis: Let me update to detect any 'reset round' (where all idx are guaranteed 0). After round 10's wrap, round 11 starts with all idx=0. More generally: round k starts with all idx=0 iff round k-1 wraps. Round k-1 wraps iff (k-1) % (h+1) == h, i.e., k % (h+1) == 0.
+
+So round 0, h+1, 2*(h+1), ... start with all idx=0. For h=10: rounds 0, 11, 22.
+
+With 16 rounds: rounds 0 and 11.
+Plan: Update gather logic to detect 'reset rounds'.
+[step 64] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Let me update to detect any 'reset round' (where all idx are guaranteed 0). After round 10's wrap, round 11 starts with all idx=0. More generally: round k starts with all idx=0 iff round k-1 wraps. Round k-1 wraps iff (k-1) % (h+1) == h, i.e., k % (h+1) == 0.
+
+So round 0, h+1, 2*(h+1), ... start with all idx=0. For h=10: rounds 0, 11, 22.
+
+With 16 rounds: rounds 0 and 11.
+Plan: Update gather logic to detect 'reset rounds'.
+[step 65] Bash: sed -n '370,405p' /app/kernel.py
+    Analysis: Down to 2011! 84 cycles saved by adding round 11 special. Still need 1250.
+
+Let me now think about this more carefully and implement mux for rounds 1-3 and 12-15. The mux for round k (where 2^k forest values needed) reduces loads.
+
+Let me think about the specifics for round k:
+- 2^k forest values needed (at indices 2^k - 1 to 2^(k+1) - 2 in forest, or 2^k to 2^(k+1) - 1 in idx_addr space).
+- Need vbroadcast of each into a vector. 2^k * VLEN = 8*2^k scratch.
+- Mux tree using parity bits
+[step 66] Bash: python3 << 'EOF'
+    Analysis: Now let me add mux for rounds where d_r is small (1, 2, 3, 4, ...). I need:
+1. Pre-load forest values for those depths into broadcast vectors.
+2. Use parity bits from previous rounds for mux.
+
+Let me think about parity tracking. The parity is computed AT END of round k for the idx update. Let me save parities.
+
+Wait actually, for round k+1 MUX, we need parities from rounds 0..k (for k+1 levels of mux). For round k+1 = 1, we need parity_0. For round k+1 = 2, we need parity_0 and parity_
+[step 67] Bash: python3 << 'EOF'
+    Analysis: Let me think differently. The mux has limited benefit. Let me look at OTHER optimizations:
+
+1. Reduce hash by some clever trick
+2. Better scheduler
+3. Software pipelining across rounds (currently end-of-round must complete before next-round start)
+
+Wait - I realize that I made `wraps` rounds (round 10) write idx_arr = vbroadcast which is just 1 op per vector. But round 10's idx update could ALSO be elided since round 11 is reset and doesn't read idx_arr. Let me check.
+
+Actually round 1
+[step 67] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Let me think differently. The mux has limited benefit. Let me look at OTHER optimizations:
+
+1. Reduce hash by some clever trick
+2. Better scheduler
+3. Software pipelining across rounds (currently end-of-round must complete before next-round start)
+
+Wait - I realize that I made `wraps` rounds (round 10) write idx_arr = vbroadcast which is just 1 op per vector. But round 10's idx update could ALSO be elided since round 11 is reset and doesn't read idx_arr. Let me check.
+
+Actually round 1
+[step 68] Bash: python3 << 'EOF'
+    Analysis: Same cycles (2011) - merging didn't hurt. Now I have 256 free scratch slots. Let me allocate path_bits.
+
+Actually wait, I should also verify correctness. The test passes - good.
+
+Let me now add path_bits and mux for d=1, 2.
+Plan: Allocate path_bits and implement mux for rounds with d=1 and d=2.
+[step 68] Bash: bash /app/run_tests.sh 2>&1 | tail -5
+    Analysis: Same cycles (2011) - merging didn't hurt. Now I have 256 free scratch slots. Let me allocate path_bits.
+
+Actually wait, I should also verify correctness. The test passes - good.
+
+Let me now add path_bits and mux for d=1, 2.
+Plan: Allocate path_bits and implement mux for rounds with d=1 and d=2.
+[step 69] Bash: python3 << 'EOF'
+    Analysis: Path_bits allocated. Now let me implement the mux logic. I'll also need:
+- A scalar that holds shift amount per level (broadcast to vector). 
+- Pre-broadcast forest values F[0..2^d-1] into vectors.
+
+Let me restructure the round body to handle muxable rounds.
+
+For mux at depth d:
+1. Setup (once per round): 
+   - 2^d scalar loads of forest values: forest[2^d-1+i] for i in 0..2^d-1.
+   - 2^d vbroadcasts to make broadcast vectors.
+   - Pre-compute path = idx_arr - path_const_v (1 valu per 
+[step 70] Bash: grep -n 'is_reset = ' /app/kernel.py
+    Analysis: Now I have the framework. Let me write the mux logic. I'll use idx_arr for path extraction. For round at depth d, I'll:
+1. Load 2^d forest values at depths 2^d-1..2^(d+1)-2.
+2. Broadcast each to a vector.
+3. Compute path = idx_arr - path_const_v.
+4. Mux tree.
+
+Let me code this carefully.
+Plan: Implement mux for d=1 and d=2 in the round body.
+[step 71] Bash: sed -n '320,378p' /app/kernel.py
+    Analysis: Let me locate where I'll add MUX setup and the mux logic for the gather.
+Plan: Add mux setup vectors and integrate into round body.
+[step 72] Bash: python3 << 'EOF'
+    Analysis: Let me add mux setup and integrate. I'll allocate path_const_v vectors for each muxed depth, and mux scalar/broadcast forest values.
+
+Let me determine which rounds to mux. For h=10, rounds=16:
+- Round depths: 0..10, then 0..4 (rounds 11..15).
+- Reset rounds (d=0): r=0, r=11. Already special.
+- Mux rounds (we'll target d=1, 2): r=1, r=2 (cycle 1), r=12, r=13 (cycle 2).
+
+Let me design the mux setup phase to be conditional on 'is_mux'.
+Plan: Implement.
+[step 72] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Let me add mux setup and integrate. I'll allocate path_const_v vectors for each muxed depth, and mux scalar/broadcast forest values.
+
+Let me determine which rounds to mux. For h=10, rounds=16:
+- Round depths: 0..10, then 0..4 (rounds 11..15).
+- Reset rounds (d=0): r=0, r=11. Already special.
+- Mux rounds (we'll target d=1, 2): r=1, r=2 (cycle 1), r=12, r=13 (cycle 2).
+
+Let me design the mux setup phase to be conditional on 'is_mux'.
+Plan: Implement.
+[step 73] Bash: python3 << 'EOF'
+    Analysis: Setup added but no change in cycles since I haven't used it yet. Let me now use it in the round body.
+Plan: Update gather to use mux when applicable.
+[step 73] Bash: bash /app/run_tests.sh 2>&1 | tail -15
+    Analysis: Setup added but no change in cycles since I haven't used it yet. Let me now use it in the round body.
+Plan: Update gather to use mux when applicable.
+[step 74] Bash: python3 << 'EOF'
+    Analysis: Down to 1958 cycles, 75.5x. Mux for d=1 saved 53 cycles. 
+
+MUX_DEPTHS includes 2 but we fall back to naive for d=2. Let me check what's still expensive.
+
+Let me verify only round 1 and round 12 use mux now (d=1).
+
+Let me think about d=2 mux. Storage issue: need to keep bit_0 and bit_1 alive during mux tree. Plus 2 intermediate vectors at level 0.
+
+For d=2 with 32 batch vecs:
+- path_v (256 ints) - overwritten
+- bit_0_v (256 ints)
+- bit_1_v (256 ints)
+- level0_pair0 (256 ints)
+- level0_p
+[step 75] Bash: python3 << 'EOF'
+    Analysis: I have 161 free slots! Plenty for 1 more batch-size scratch (would need 256). Hmm not quite enough. 
+
+Wait actually I removed tc_arr (saved 256) but only used a few slots for mux setup. So I have 161 free.
+
+Let me check: We need pair0_arr (256 slots) for d=2 mux. 161 < 256. Don't have enough.
+
+Actually, I wonder if 1 of the existing arrays could be used as pair0:
+- tb_arr currently used for path_storage (during mux), then t2 (during hash), then next_idx (during idx update).
+- ta_arr us
+[step 76] Bash: python3 << 'EOF'
+    Analysis: Loads down to 3167. Bound: 1583 cy. Valu 8511, bound 1419. We're at 1958.
+
+Overhead 1958 - 1583 = 375 cycles. That's interesting - more overhead than before.
+
+Let me look at where the overhead comes from. Maybe some serial chain or specific bottleneck.
+
+Actually wait - load was 3928, now 3167. Saved 761 loads = 380 cy. Cycles saved = 53. So we got a small fraction of the theoretical save.
+
+Because valu became the new contender (1419 vs current 1958). Hmm 1958 vs 1419 means we have 539 
+[step 77] Bash: python3 << 'EOF'
+    Analysis: In steady state, both load and valu are running well in parallel: load=2/2 (full) and valu=3-5/6.
+
+Load is dominant, hitting full 2/cycle. The 1958 cy result is essentially load-bound with ~10% overhead.
+
+Loads = 3167 / 2 = 1583 theoretical. Plus valu overhead from chained dependencies and inter-round bubbles. Total = 1958.
+
+If I can cut more loads, I'd lower the bound. Mux for d=2 (rounds 2 and 13) could save 504 loads.
+
+Let me implement d=2 mux. I'll use the careful storage scheme.
+P
+[step 78] Bash: python3 << 'EOF'
+    Analysis: Let me think about this differently. Instead of d=2 mux which is complex, let me look at the BIG WIN: REDUCE LOAD COUNT in another way.
+
+Actually I realize I haven't optimized round 11 (reset). Round 11 currently uses 1 load + broadcast. But we could vbroadcast the same nv vector to ALL 32 batch vectors using a single shared scratch.
+
+Wait — actually currently it does 32 vbroadcasts (one per vector). What if we just use a single nv vector (shared across all batch vectors)? Then val ^= 
+[step 78] Bash: bash /app/run_tests.sh 2>&1 | tail -15
+    Analysis: Let me think about this differently. Instead of d=2 mux which is complex, let me look at the BIG WIN: REDUCE LOAD COUNT in another way.
+
+Actually I realize I haven't optimized round 11 (reset). Round 11 currently uses 1 load + broadcast. But we could vbroadcast the same nv vector to ALL 32 batch vectors using a single shared scratch.
+
+Wait — actually currently it does 32 vbroadcasts (one per vector). What if we just use a single nv vector (shared across all batch vectors)? Then val ^= 
+[step 79] Bash: grep -n 'MUX_DEPTHS\|is_mux_xor_done\|new_path_const' /app/kernel.py | head -20
+    Analysis: One assertion failed (the idx_update one). The replacement didn't fully apply. Let me check what got applied.
+Plan: Check what's in the file now.
+[step 80] Bash: grep -n 'old_init\|old_d2\|old_xor\|old_idx_update\|old_loop_top' /tmp/dummy 2>/dev/null; echo;…
+    Analysis: The big edit didn't get applied because the first assertion (looking for old_init) failed since I changed it. Let me reread. Actually the error said `AssertionError` at line 146. Let me check which one failed.
+Plan: Try the edit step by step.
+[step 81] Bash: grep -n 'MUX_DEPTHS = \[1' /app/kernel.py
+    Analysis: The init replacement didn't get applied. The first assertion (zero_v setup) wasn't found. Let me retry, applying changes more carefully one at a time.
+Plan: Apply changes step by step.
+[step 82] Bash: sed -n '355,395p' /app/kernel.py
+    Analysis: Let me view the area around line 359.
+Plan: Find context.
+[step 83] Bash: python3 << 'EOF'
+    Analysis: I see - my init code didn't add zero_v, three_v, new_path_const_v. Let me apply it now.
+Plan: Add the missing init.
+[step 83] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: I see - my init code didn't add zero_v, three_v, new_path_const_v. Let me apply it now.
+Plan: Add the missing init.
+[step 84] Bash: grep -n 'elif d_r == 2' /app/kernel.py
+    Analysis: Same cycles. The d=2 mux logic still falls back to naive. Let me now actually implement the d=2 mux logic.
+Plan: Replace d_r==2 with mux implementation.
+[step 85] Bash: sed -n '480,540p' /app/kernel.py
+    Analysis: Let me view that area.
+Plan: Look at current d=2 fallback.
+[step 86] Bash: sed -n '420,480p' /app/kernel.py
+    Analysis: Let me replace the d_r==2 fallback. I need to look at the d_r==1 setup to understand the path computation context.
+Plan: Look at the gather block.
+[step 87] Bash: python3 << 'EOF'
+    Analysis: I see. The `path_storage = tb_arr` is set, and path is computed in tb_arr. For d=1, we use tb_arr for bit extraction. For d=2, I need to also use idx_arr.
+
+Let me restructure the d_r==2 branch to do the 4-mask mux using idx_arr=path:
+Plan: Replace d=2 fallback.
+[step 87] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: I see. The `path_storage = tb_arr` is set, and path is computed in tb_arr. For d=1, we use tb_arr for bit extraction. For d=2, I need to also use idx_arr.
+
+Let me restructure the d_r==2 branch to do the 4-mask mux using idx_arr=path:
+Plan: Replace d=2 fallback.
+[step 88] Bash: grep -n 'parity_arr + base, val_arr' /app/kernel.py
+    Analysis: An assertion failed at the idx update replacement. The pattern matched something else first. Let me check.
+Plan: Inspect what's there.
+[step 89] Bash: sed -n '560,585p' /app/kernel.py
+    Analysis: Let me look at the area.
+Plan: View block.
+[step 90] Bash: python3 << 'EOF'
+    Analysis: I see - the structure is already in place. The replacement failed because my pattern had an extra blank line or different indentation. Let me try directly with sed.
+Plan: Use python to do small targeted replacement.
+[step 91] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Now let me run.
+Plan: Run tests.
+[step 92] Bash: python3 << 'EOF'
+    Analysis: Out of mem index. The d=2 mux is incorrect—idx_arr no longer holds idx_addr but path. So if some other code uses idx_arr as gather addr (in other rounds), it crashes.
+
+Wait — idx_arr is supposed to hold idx_addr for next rounds. After d=2 mux, we set idx_arr = path during gather phase, then idx update writes new idx_addr. So after the round, idx_arr should be correct.
+
+Let me trace: 
+- Round 2 (d=2 mux):
+  - Compute path, store in idx_arr (overwrite).
+  - 4-mask mux, result in tb.
+  - 
+[step 92] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Out of mem index. The d=2 mux is incorrect—idx_arr no longer holds idx_addr but path. So if some other code uses idx_arr as gather addr (in other rounds), it crashes.
+
+Wait — idx_arr is supposed to hold idx_addr for next rounds. After d=2 mux, we set idx_arr = path during gather phase, then idx update writes new idx_addr. So after the round, idx_arr should be correct.
+
+Let me trace: 
+- Round 2 (d=2 mux):
+  - Compute path, store in idx_arr (overwrite).
+  - 4-mask mux, result in tb.
+  - 
+[step 93] Bash: python3 << 'EOF'
+    Analysis: Still IndexError. Let me check what else might be wrong. Maybe my path computation in idx_arr (overwrite) has an issue with timing. Or the new_path_const_v computation.
+
+Let me add some debug prints.
+Plan: Test with smaller test first.
+[step 94] Bash: python3 << 'EOF'
+    Analysis: Error at cycle 85 with smaller test. Let me check what's happening. Likely a bad gather address. Let me look at the round flow more carefully.
+
+Issue might be: in round 2 (d=2), I overwrite idx_arr with path. But the d=2 mux is only triggered when d_r==2 in MUX_DEPTHS. Let me check: do I have MUX_DEPTHS = [1, 2]? Yes. 
+
+For d_r==2: gather code does:
+  path_storage = idx_arr (since d_r != 1)
+  for v: slots.append valu - of (idx_arr - path_const_v) -> idx_arr (overwrite)
+  
+So idx_arr ge
+[step 94] Bash: python3 << 'EOF'
+    Analysis: Error at cycle 85 with smaller test. Let me check what's happening. Likely a bad gather address. Let me look at the round flow more carefully.
+
+Issue might be: in round 2 (d=2), I overwrite idx_arr with path. But the d=2 mux is only triggered when d_r==2 in MUX_DEPTHS. Let me check: do I have MUX_DEPTHS = [1, 2]? Yes. 
+
+For d_r==2: gather code does:
+  path_storage = idx_arr (since d_r != 1)
+  for v: slots.append valu - of (idx_arr - path_const_v) -> idx_arr (overwrite)
+  
+So idx_arr ge
+[step 94] Bash: bash /app/run_tests.sh 2>&1 | tail -5
+    Analysis: Error at cycle 85 with smaller test. Let me check what's happening. Likely a bad gather address. Let me look at the round flow more carefully.
+
+Issue might be: in round 2 (d=2), I overwrite idx_arr with path. But the d=2 mux is only triggered when d_r==2 in MUX_DEPTHS. Let me check: do I have MUX_DEPTHS = [1, 2]? Yes. 
+
+For d_r==2: gather code does:
+  path_storage = idx_arr (since d_r != 1)
+  for v: slots.append valu - of (idx_arr - path_const_v) -> idx_arr (overwrite)
+  
+So idx_arr ge
+[step 95] Bash: python3 << 'EOF'
+    Analysis: OK with d=2 disabled, we still get 1958 (the d=1 mux works). Now let me carefully debug the d=2 mux logic.
+
+Let me re-enable d=2 and trace.
+Plan: Re-enable and debug.
+[step 95] Bash: python3 << 'EOF'
+    Analysis: OK with d=2 disabled, we still get 1958 (the d=1 mux works). Now let me carefully debug the d=2 mux logic.
+
+Let me re-enable d=2 and trace.
+Plan: Re-enable and debug.
+[step 96] Bash: python3 << 'EOF'
+    Analysis: idx_arr at error: [72, 77, 64, 70, 64, 67, 70, 74]. Forest has 31 nodes, so valid idx_addr is fvp..fvp+30 = 7..37. But values are 64-77 — way out of range!
+
+This is at pc 85. Let me see what happened. Looking at idx_arr: actually max valid is 7+30=37, but we have 64-77. Total mem size:
+For f.height=4, n_nodes = 31. Build_mem_image: header=7, plus 31 forest, 16 indices, 16 values + extra. Total ~7 + 31 + 16 + 16 + 16 + 32 = ~118.
+
+74 is within 118 but accessing forest[74-7] = forest[67]
+[step 97] Bash: python3 << 'EOF'
+    Analysis: idx_arr is at addr 10. The error was at addr 10 with offset 0 -> reads scratch[10+0]. So scratch[10] is idx_arr[0]. Yes that's idx_arr.
+
+idx_arr[0]=72. fvp=7. idx_arr[0] should be in [7, 37]. 72 is out.
+
+Let me trace which round this corresponds to. h=4, so rounds 0-5. Mux for d=1 (round 1) and d=2 (round 2). Errors come from a naive gather, so rounds 3, 4 (or 5 reset which doesn't gather).
+
+Let me check what cycle 85 corresponds to. Each round has ~?? bundles. Let me see round boundar
+[step 98] Bash: sed -n '482,540p' /app/kernel.py
+    Analysis: At pc=60, idx_arr = [12,13,10,12,10,11,12,13,...] which is idx_addr_2 (in [10..13] range). Good.
+At pc=85, idx_arr = [72,77,64,70,...]. Way out!
+
+Between pc 60 and 85, idx_arr got corrupted. Difference = 25 PCs. Hmm.
+
+At pc 85 we have a load_offset reading idx_arr (addr 10). The error occurred during this load (out of bounds memory access).
+
+Let me check what happened to idx_arr between pc 60 and 85. The d=2 mux for round 2 should:
+1. Subtract path_const from idx_arr to get path (overw
+[step 99] Bash: python3 << 'EOF'
+    Analysis: Wait — the d_r==2 fallback is STILL the naive gather! My earlier replacement to the 4-mask scheme didn't apply. Let me check what happened.
+
+Looking at my earlier transformation, the assertion `assert old_d2 in src` failed somewhere. Let me re-examine.
+
+Actually it must have. Let me re-edit.
+Plan: Replace the d_r==2 block correctly.
+[step 99] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Wait — the d_r==2 fallback is STILL the naive gather! My earlier replacement to the 4-mask scheme didn't apply. Let me check what happened.
+
+Looking at my earlier transformation, the assertion `assert old_d2 in src` failed somewhere. Let me re-examine.
+
+Actually it must have. Let me re-edit.
+Plan: Replace the d_r==2 block correctly.
+[step 100] Bash: sed -n '480,525p' /app/kernel.py
+    Analysis: The d=2 mux code wasn't replaced. Let me look at what's actually there.
+Plan: Find the actual content.
+[step 101] Bash: python3 << 'EOF'
+    Analysis: The block is still there. Let me copy this exactly and replace.
+Plan: Use exact block.
+[step 101] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: The block is still there. Let me copy this exactly and replace.
+Plan: Use exact block.
+[step 102] Bash: python3 << 'EOF'
+    Analysis: Replaced. Still IndexError. So my d=2 mux code itself has a bug. Let me trace.
+
+Let me run small test to check.
+Plan: Compare output with reference.
+[step 103] Bash: python3 << 'EOF'
+    Analysis: Now I can see clearly:
+- pc=0: zeros (init)
+- pc=20: idx_arr = 7 (= fvp). This is the initial idx_addr_0 = fvp+0 = 7. ✓
+- pc=34: 8, 9. This is idx_addr_1 = idx_1 + fvp where idx_1 ∈ {1,2}. ✓
+- pc=50: 10, 11, 12, 13. idx_addr_2. ✓
+- pc=71: 35-41. expected idx_addr_3 = 14-21. WRONG! 35-41 is too high.
+
+My d=2 mux idx update is producing wrong values. 
+
+Let me see: 35 = ? formula was 2*path + new_path_const + parity = 2*path + (fvp+7) + (val&1) = 2*path + 14 + 0 or 1.
+
+For 2*path + 14 + p
+[step 104] Bash: python3 << 'EOF'
+    Analysis: Looking at the bundles, I see something interesting at #71:
+  `('multiply_add', 10, 10, 235, 42)` -- writes to addr 10 (idx_arr).
+  235 = two_v.
+  42 = ta_arr (parity_arr).
+
+That's idx update for round 1 (d=1 mux). But this happens at pc 71 with idx_arr_OLD = 8/9 (idx_addr_1). Compute: 2*idx_addr_1 + parity = 16 or 18 + parity. Should give 16-19 (idx_addr_2 candidates).
+
+Wait but pc=50 already shows idx_addr_2 (10-13). Hmm I think I'm confused on round timing. Let me look at pc= bounda
+[step 105] Bash: python3 << 'EOF'
+    Analysis: No '-' writing to 10! That means my path subtract for d=2 mux is NOT being written. Either:
+1. The path subtract is going to a different address.
+2. My code is writing path_storage = idx_arr but the slot uses a different addr.
+
+Wait actually let me check. The path subtract block:
+```
+for v in range(n_vec):
+    base = v * VLEN
+    slots.append(("valu", ("-", path_storage + base, idx_arr + base, path_const_v)))
+```
+With path_storage = idx_arr, this writes idx_arr + base. So slot[1] shoul
+[step 106] Bash: grep -n 'path_storage' /app/kernel.py
+    Analysis: I see! At pc 51, there are two subtractions:
+- ('-', 58, 10, 321): writes 58 (=tb_arr+0), reads 10 (idx_arr+0) and 321 (path_const_d2_v).
+- ('-', 66, 18, 321): writes 66 (=tb_arr+8), reads 18 (idx_arr+8).
+
+So the path subtract is writing to TB_ARR not IDX_ARR. My code says path_storage = idx_arr for d=2, but this writes to tb_arr (58, 66).
+
+Let me check the actual code:
+Plan: Look at path_storage logic.
+[step 107] Bash: sed -n '435,455p' /app/kernel.py
+    Analysis: I see — line 442 has `path_storage = tb_arr` only. My intended replacement to use idx_arr for d=2 didn't apply. Let me look at the full context.
+Plan: Look at the context.
+[step 108] Bash: python3 << 'EOF'
+    Analysis: I see, the path_storage = tb_arr is hardcoded. I had a replacement to make it conditional on d_r but it didn't apply. Let me redo it.
+Plan: Make path_storage conditional.
+[step 108] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: I see, the path_storage = tb_arr is hardcoded. I had a replacement to make it conditional on d_r but it didn't apply. Let me redo it.
+Plan: Make path_storage conditional.
+[step 109] Bash: python3 << 'EOF'
+    Analysis: Hmm, only 10 more cycles than before (1968 vs 1958). And going UP from 1958, not down. So d=2 mux added valu cost but not enough load savings.
+
+Let me check stats.
+Plan: Check stats.
+[step 110] Bash: python3 << 'EOF'
+    Analysis: Loads dropped to 2656 (from 3167). Valu went up to 9025 (from 8511). 
+
+Load bound: 1328. Valu bound: 1504. Now valu is the bottleneck.
+
+But we got 1968 cycles. Hmm even with valu bound of 1504, we got 1968 = +464 cycles overhead. The bottleneck shifted but inefficiency is high.
+
+Let me check if d=2 mux scheduling is good.
+Plan: Check what's making it slow. Perhaps too much serial work in d=2 mux.
+[step 111] Bash: python3 << 'EOF'
+    Analysis: Most bundles have 5-7 ops. Pretty filled. Hmm. 
+
+The issue: we got 1968 cy with load bound 1328, valu bound 1504. So either the schedule has serial chains we can't escape, or there's measurement overhead.
+
+Let me look at where d=2 mux is in the pipeline. The 4 mask compares + 4 mul_adds for the accumulator are serially dependent (each mul_add reads previous mul_add result). So there's a serial chain of 4 in d=2 mux per vector. That's 4 bundle cycles per vector minimum.
+
+With 32 vectors
+[step 111] Bash: bash /app/run_tests.sh 2>&1 | tail -5
+    Analysis: Most bundles have 5-7 ops. Pretty filled. Hmm. 
+
+The issue: we got 1968 cy with load bound 1328, valu bound 1504. So either the schedule has serial chains we can't escape, or there's measurement overhead.
+
+Let me look at where d=2 mux is in the pipeline. The 4 mask compares + 4 mul_adds for the accumulator are serially dependent (each mul_add reads previous mul_add result). So there's a serial chain of 4 in d=2 mux per vector. That's 4 bundle cycles per vector minimum.
+
+With 32 vectors
+[step 112] Bash: python3 << 'EOF'
+    Analysis: 1958 baseline. With d=2 mux: 1968. So d=2 mux made it WORSE by 10 cycles.
+
+Let me think... the 4-mask scheme has serial mul_add chain. The acc dep means each mul_add depends on previous, creating an 8-step serial chain (4 == + 4 mul_add).
+
+Let me try a parallel mux scheme: compute all 4 masks first (4 ops in parallel), then compute 4 products in parallel, then sum them in parallel (3 adds for 4 values = log2(4) = 2 levels).
+
+Wait but products need scratch. 4 product results = 4 arrays.
+[step 112] Bash: python3 << 'EOF'
+    Analysis: 1958 baseline. With d=2 mux: 1968. So d=2 mux made it WORSE by 10 cycles.
+
+Let me think... the 4-mask scheme has serial mul_add chain. The acc dep means each mul_add depends on previous, creating an 8-step serial chain (4 == + 4 mul_add).
+
+Let me try a parallel mux scheme: compute all 4 masks first (4 ops in parallel), then compute 4 products in parallel, then sum them in parallel (3 adds for 4 values = log2(4) = 2 levels).
+
+Wait but products need scratch. 4 product results = 4 arrays.
+[step 113] Bash: python3 << 'EOF'
+    Analysis: I see the schedule! At #272-278, all 32 == ops for mask_0 happen across 7 cycles (with some overlap with other ops). Then at #278 the mul_adds for mask_0*F0 start.
+
+The scheduler is packing 32 == ops over 6 cycles (5-6 per bundle). Then mul_adds start. Then mask_1 == ops...
+
+Wait but each level reads ta_arr that was just written by previous level's mask. So there's chain. But across 32 vectors at SAME level, they're independent.
+
+The issue: we write to TA_ARR (full 256 elements). All 3
+[step 114] Bash: grep -n 'pc_v = c1m_v' /app/kernel.py
+    Analysis: Now let me skip the idx update for the LAST round (since it's not used after). Also let me share nv vector for reset rounds.
+Plan: Add last-round optimization.
+[step 115] Bash: sed -n '545,580p' /app/kernel.py
+    Analysis: Let me look at the area to add 'skip last round' logic.
+Plan: Modify idx update to skip on last round.
+[step 116] Bash: python3 << 'EOF'
+    Analysis: Let me wrap the idx update in a check: skip if r == rounds - 1.
+Plan: Wrap.
+[step 116] Bash: bash /app/run_tests.sh 2>&1 | tail -5
+    Analysis: Let me wrap the idx update in a check: skip if r == rounds - 1.
+Plan: Wrap.
+[step 117] Bash: python3 -c "
+    Analysis: Tiny improvement to 1956. Let me think more.
+
+Let me also check if I can reduce loads in some specific way. Maybe instead of d=2 mux which has long dep chain, use a parallel approach.
+
+Actually let me try a SIMPLER d=2 mux that uses tree structure but with available storage (using idx_arr as path).
+
+Key insight: I can OVERWRITE idx_arr with intermediate values DURING mux, AS LONG AS I save what's needed for idx update at the end.
+
+For idx update I need path info. At end of d=2 round, I
+[step 118] Bash: echo 'Stuck on d=2 mux storage. Let me try other ideas.'
+    Analysis: 201 free slots. Not enough for a 256-elem array. But we have just enough for 256/8 = 32 elements (4 vectors). Hmm.
+
+Let me try another optimization: batch the round 0 and round 11 nv broadcast more efficiently.
+
+Actually let me try implementing d=2 mux using ALL THREE arrays (idx_arr, ta, tb) for tree mux WITHOUT path reconstruction. Instead, OUTPUT the new idx_addr to idx_arr in the PROCESS.
+
+Key insight: at end of round 2, idx_arr should hold idx_addr_3 = next_idx_addr.
+
+Let me skip 
+[step 119] Bash: grep -n 'val_ptrs\|vp =\|vp_' /app/kernel.py
+    Analysis: Wait, I have an idea. What if I allocate a 4th 256-elem array? I have 201 free. Not enough. 
+
+Let me see what scratch I can free:
+- ip_, vp_ pointers: 64 slots. After init they're dead (well, vp_ used at end, ip_ dead).
+- Lots of small constant scratches.
+
+What if I DROP 32 of the ip_/vp_ ? They're only used at init/end, can be recomputed.
+
+Actually let me allocate after init phase: at that point, we know we don't need ip_ anymore. We could even REUSE those 32 slots for a different pur
+[step 120] Bash: python3 << 'EOF'
+    Analysis: Let me drop vp_ — instead, compute val_ptrs on the fly. We have ip_ allocated but used for vload in init. Let me REUSE ip_ for vp_!
+
+Actually we can use ip_[v] for vload of idx (init) and same scratch for vstore of val (end). They're different times. But we'd need to UPDATE ip_[v] to inp_values_p + v*VLEN before vstore.
+
+Or we can have a SINGLE shared scratch that we update before each vstore.
+Plan: Drop vp_ allocations. Use ip_ scratch and update for vstore.
+[step 120] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Let me drop vp_ — instead, compute val_ptrs on the fly. We have ip_ allocated but used for vload in init. Let me REUSE ip_ for vp_!
+
+Actually we can use ip_[v] for vload of idx (init) and same scratch for vstore of val (end). They're different times. But we'd need to UPDATE ip_[v] to inp_values_p + v*VLEN before vstore.
+
+Or we can have a SINGLE shared scratch that we update before each vstore.
+Plan: Drop vp_ allocations. Use ip_ scratch and update for vstore.
+[step 121] Bash: python3 << 'EOF'
+    Analysis: Output is wrong. The issue: ip_ scratch holds idx_ptr at init. At end I update them. But maybe the schedule places vstore using ip_ AS idx_ptr (still). Or the schedule writes to ip_ in unintended places.
+
+Actually after init phase, ip_ scratches are basically dead. Let me check if my list_schedule properly handles this. The init slots flush at end of init. Then main loop uses fresh slots.
+
+Wait — actually the init slots include both add_imm AND vload. Both written to instrs. Vload was 
+[step 122] Bash: python3 << 'EOF'
+    Analysis: OK only used at init. Then the issue must be the timing - the vstore reads VAL_PTRS but they got reset to inp_VALUES_p AFTER vload should have completed. Let me trace.
+
+Actually wait! The val_ptrs = idx_ptrs alias. But original code at end of program tries to use val_ptrs (= idx_ptrs) for vstore. After init, ip_[v] = inp_indices_p + v*VLEN.
+
+My new end code:
+  for v: add_imm val_ptrs[v] = inp_values_p + v*VLEN. (Updates ip_[v].)
+  for v: vstore val_ptrs[v]. (Uses ip_[v] = inp_values_p 
+[step 123] Bash: python3 << 'EOF'
+    Analysis: I see something interesting: the vstores ARE happening. But they store to addresses 1053, 1054, 1055, ..., 1065. 
+
+But wait — vstore takes (addr, src). addr is a SCRATCH addr that holds the MEM addr. addr=1053 should be a scratch address holding inp_values_p + offset. 
+
+1053..1065 - those addresses look like they correspond to ip_? Let me check.
+Plan: Check ip_ scratch addresses.
+[step 124] Bash: python3 << 'EOF'
+    Analysis: ip_ addresses are 1034-1065. The vstores use 1053-1065 (some, not all 32). And we see early vstores to 1053, 1054, ... interleaved with main loop work.
+
+Wait look at #1883: `vstore 1053, 418`. addr 1053 = ip_19. That's INDEX of vector 19. But it's in the MAIN LOOP (along with hash work).
+
+This means the vstore is happening BEFORE the val for vector 19 is finalized! The schedule put it too early.
+
+The problem: my list_schedule treats vstore as having a dep on the LAST val_arr[base] writ
+[step 125] Bash: python3 << 'EOF'
+    Analysis: val_arr = 266. So val_arr[19*8..19*8+7] = 266 + 152..159 = 418..425. So `vstore 1053, 418` stores val_arr[19*VLEN] = val_arr[152..159]. Vec 19.
+
+This is happening at instr 1883 in the main loop. So the LAST write to val_arr[152..159] must occur BEFORE instr 1883 in the schedule.
+
+Let me check — final hash op for vec 19 should be the multiply_add of stage 5. Looking at the schedule, in the last few rounds, hash overwrites val.
+
+Let me check: instr 1885 has `('^', 442, 442, 698)` -- writ
+[step 126] Bash: python3 << 'EOF'
+    Analysis: Two add_imms to 1053! 
+- #23: writes 1053 = inp_indices_p_addr (4) + 152.
+- #66: writes 1053 = inp_values_p_addr (5) + 152.
+- #1883: vstore from 1053.
+
+Wait, #66 writes a value that's inp_values_p + 152. But that's correct for vstore. And #1883 reads it. So vstore reads addr 1053 = (inp_values_p + 152). At #1883.
+
+Between #66 and #1883, has anyone else written to 1053? Let me check.
+
+Wait my init writes ip_[v] = inp_indices_p_addr + v*VLEN at #23 (or wherever in init).
+Then end-phase w
+[step 127] Bash: python3 << 'EOF'
+    Analysis: OK so:
+- #23 add_imm: 1053 = inp_indices_p + 152.
+- #24 vload: reads 1053 (= idx_indices_p + 152), loads to 162 and 418.
+  Wait 162 is idx_arr+152 and 418 is val_arr+152. Both vload from same source 1053? That means BOTH idx and val have base = inp_indices_p + 152. 
+  
+  But for val we want inp_values_p + 152! 
+
+Problem: my code has `init_slots.append(("load", ("vload", val_arr + v * VLEN, val_ptrs[v])))` where val_ptrs[v] = ip_[v]. So val vload uses ip_[v] which is inp_indices_p + off
+[step 127] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: OK so:
+- #23 add_imm: 1053 = inp_indices_p + 152.
+- #24 vload: reads 1053 (= idx_indices_p + 152), loads to 162 and 418.
+  Wait 162 is idx_arr+152 and 418 is val_arr+152. Both vload from same source 1053? That means BOTH idx and val have base = inp_indices_p + 152. 
+  
+  But for val we want inp_values_p + 152! 
+
+Problem: my code has `init_slots.append(("load", ("vload", val_arr + v * VLEN, val_ptrs[v])))` where val_ptrs[v] = ip_[v]. So val vload uses ip_[v] which is inp_indices_p + off
+[step 128] Bash: python3 -c "
+    Analysis: Back to 1956. OK. Let me try a different optimization. 
+
+Let me look at WHERE the cycle overhead comes from. We have 1956 cy with load bound 1583 and valu bound 1419. So load bound dominates. Gap = 373 cy.
+
+Where are those 373 'wasted' cycles? Inter-round bubbles? Critical path?
+
+Let me see what the SCHEDULE actually does at round transitions.
+
+Actually, let me try one MORE approach for d=2 mux: stash bit_0 in a SMALLER array (using only some part of scratch).
+
+OR: try the d=2 mux with
+[step 129] Bash: grep -n 'nn_v' /app/kernel.py | head -10
+    Analysis: 201 free. Not 256. Need to drop 55 more slots.
+
+Let me drop some unused stuff:
+- scalar_nv (1 slot) - can reuse n_nodes_addr? 
+- nn_v (8 slots) - we don't use it anymore (wrap simplification). Let me check.
+
+Actually wait, we use nn_v in the wraps branch. Let me check.
+Plan: Check if nn_v is still used.
+[step 130] Bash: python3 << 'EOF'
+    Analysis: nn_v is unused! 8 slots free.
+
+Also let me check for other unused things.
+Plan: Drop nn_v and check other unused.
+[step 130] Bash: bash /app/run_tests.sh 2>&1 | tail -5
+    Analysis: nn_v is unused! 8 slots free.
+
+Also let me check for other unused things.
+Plan: Drop nn_v and check other unused.
+[step 131] Bash: python3 << 'EOF'
+    Analysis: Same. Let me check what other ideas could reduce. Let me look at what HASH stages can do.
+
+Actually let me try a completely different angle: more software pipelining of round transitions.
+
+The round transitions: round k+1 gather can't start until idx_addr_{k+1} is computed (end of round k).
+
+What if we overlap differently?
+
+Actually I'm going to try a different approach: Since we're load-bound, maybe pre-load forest values in sequence or use a different gather mechanism.
+
+Let me look a
+[step 132] Bash: python3 << 'EOF'
+    Analysis: 349 cycles with load engine empty. Out of 1956 total. That's where we could reclaim cycles!
+
+Full load utilization would push us toward load_bound = 1583. We have 1556 + 51 partial = ~1607 cycles using load. So ~349 waste.
+
+Where are these load-empty cycles? Likely:
+1. Round 0 (reset): no gather loads at all.
+2. Round 11 (reset): same.
+3. Round transitions where loads aren't ready yet.
+4. Mux rounds (d=1) which use few loads.
+
+The load engine is idle during reset/mux rounds - we could 
+[step 133] Bash: python3 << 'EOF'
+    Analysis: Init phase looks like ~70 cycles. flow=1/cy bottleneck (because of 64 add_imms for ip_/vp_).
+
+The main gather loads start around #70+. There's a 70-cycle warmup.
+
+70 cycles of init + 1956 - 70 = 1886 main-loop cycles. Hmm.
+
+Let me see if I can speed up init by using 'add_imm' equivalents via alu instead of flow. Add_imm uses flow which is only 1/cycle.
+
+Actually wait alu has + op that can do dest = a + b. If we have a const for the offset, we can use alu for additions. alu has 12 slots
+[step 134] Bash: python3 << 'EOF'
+    Analysis: Major load idle:
+- #82..262 (181 cycles): around round 0/1 area.
+- #1415..1559 (145 cycles): around round 11 area.
+- #1944..1955 (12 cycles): end.
+
+These 326 idle cycles are around RESET rounds (0 and 11) where no gather loads happen.
+
+Wait actually round 0 doesn't have gather loads. Round 1 (d=1 mux) has just 2 loads. So in those rounds, load engine is idle.
+
+IDEA: Pre-load future round's gather data during these idle slots! During round 0 and 1, while load engine is idle, we could st
+[step 134] Bash: bash /app/run_tests.sh 2>&1 | tail -5
+    Analysis: Major load idle:
+- #82..262 (181 cycles): around round 0/1 area.
+- #1415..1559 (145 cycles): around round 11 area.
+- #1944..1955 (12 cycles): end.
+
+These 326 idle cycles are around RESET rounds (0 and 11) where no gather loads happen.
+
+Wait actually round 0 doesn't have gather loads. Round 1 (d=1 mux) has just 2 loads. So in those rounds, load engine is idle.
+
+IDEA: Pre-load future round's gather data during these idle slots! During round 0 and 1, while load engine is idle, we could st
+[step 135] Bash: python3 << 'EOF'
+    Analysis: Without mux: 2009 cy. With d=1 mux: 1956 cy. So d=1 mux saves 53 cy. Less than my estimate (235 cy each), because of load idle waste.
+
+Let me re-enable d=1 mux.
+Plan: Re-enable d=1.
+[step 136] Bash: bash /app/run_tests.sh 2>&1 | tail -25
+    Analysis: OK we're at 1956 cycles. 
+
+Let me think deeply: Even with PERFECT load utilization, total work is bound by something. Let me see total ops:
+- Loads: ~3167 (with 1 d=1 mux for rounds 1, 12).
+- Valu: ~8500.
+- Total cycles bound: max(3167/2, 8500/6) = max(1583, 1417) = 1583.
+
+For cycles < 1250, we need:
+- Loads < 2500 OR valu < 7500.
+
+Let me see if I can reduce VALU.
+
+Hash is 12 valu/vec. Plus 5 other ops. Total 17/vec. *32 *16 = 8704. Close to 8500.
+
+If I can reduce hash, big win.
+
+Wait 
+[step 137] Bash: python3 << 'EOF'
+    Analysis: We pass test_75x but not test_100x (need 1500). The TASK requires < 1250 (about 118x). 
+
+Let me make ONE more major attempt at d=2 mux. The insight: I need 4 storage arrays during d=2 mux. We can find one more by being CLEVER.
+
+Actually here's the key insight: At the START of mux phase, val_arr[v] has the val from previous round. After hashing, val_arr[v] has new val. 
+
+WAIT — what if we could TEMPORARILY store something in val_arr? No, val_arr must hold the val for hash.
+
+WAIT — what 
+[step 137] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: We pass test_75x but not test_100x (need 1500). The TASK requires < 1250 (about 118x). 
+
+Let me make ONE more major attempt at d=2 mux. The insight: I need 4 storage arrays during d=2 mux. We can find one more by being CLEVER.
+
+Actually here's the key insight: At the START of mux phase, val_arr[v] has the val from previous round. After hashing, val_arr[v] has new val. 
+
+WAIT — what if we could TEMPORARILY store something in val_arr? No, val_arr must hold the val for hash.
+
+WAIT — what 
+[step 138] Bash: python3 << 'EOF'
+    Analysis: Down to 1945 (vs 1956). Tiny savings. Let me also check if test_100x is passing now (need <1500). No, still fails.
+
+Let me see stats.
+Plan: Check engine stats.
+[step 139] Bash: python3 << 'EOF'
+    Analysis: Loads dropped to 2656. Valu went up to 8803 (from 8500). Net cy 1945.
+
+Load bound 1328. Valu bound 1467. Max 1467. We're 32% over. Hmm.
+
+With d=2 mux saving more loads but adding valu, we're now barely better.
+
+Let me think about what's going on. The valu bound is now 1467 (vs 1417 before d=2). The cycle count is ~1945. Overhead 478 cy.
+
+So serialization is huge. Let me look at the d=2 mux specifically - the cumulative chain has 3 serial mul_adds.
+
+For 32 vectors with 3-deep dep chain,
+[step 140] Bash: python3 << 'EOF'
+    Analysis: Pattern not found. Let me look for any '<' that compares with zero_v.
+Plan: Search differently.
+[step 141] Bash: python3 << 'EOF'
+    Analysis: Sparse cmp_0 (only 7 cycles in round 2, 6 in round 13). The mux is well-distributed.
+
+Let me look at the schedule near round 2 mux start.
+Plan: Look at #272-300.
+[step 142] Bash: python3 << 'EOF'
+    Analysis: From #281+ all valu 6/6 = max valu. Load engine is COMPLETELY IDLE in round 2 (mux d=2 + hash). Long stretch of valu-only.
+
+40+ cycles of valu-only. Load idle.
+
+This is a problem. The d=2 mux makes round 2 valu-bound entirely. We're not getting the load benefit.
+
+With naive gather: round 2 = 256 loads + 96 valu work = max(128, 96) = 128 cy load-bound.
+With d=2 mux: 4 loads + ~150 valu work (96 hash + 54 mux extra) = max(2, 25) = 25 cy valu-bound. PER ROUND. 
+
+2 d=2 rounds (round 2, 13)
+[step 143] Bash: python3 << 'EOF'
+    Analysis: First load_offset using idx_arr is at #385. That's the round 3 gather (since round 2 used mux).
+
+Between round 2 ending and round 3 starting, there's a gap. Let me see how long round 2 takes overall.
+
+Round 2 mux ends around when val_arr gets updated. Let me see when val_arr writes occur.
+
+Actually let me look at when load engine becomes busy after round 2 starts.
+
+Looking at my trace earlier #281-319+ all valu-only. #385 load_offset starts. So load idle for ~70 cycles in round 2!
+
+Rou
+[step 144] Bash: python3 << 'EOF'
+    Analysis: OK 126 free now. We need 8 F + 7 D + path_const = 16 vectors = 128 slots. JUST barely doesn't fit (need 128, have 126). 2 slots short.
+
+Let me drop something else. Maybe scalar_nv (1 slot)? Doesn't matter. Need 2.
+
+Actually let me free ip_ slots (32 of them). After init, ip_ are dead.
+
+Wait we use vp_ but ip_ is dead after init. Both have 32 each. Let's drop ip_ at init - reuse a single scalar.
+Plan: Drop ip_ array (use shared scalar for init).
+[step 144] Bash: bash /app/run_tests.sh 2>&1 | tail -5
+    Analysis: OK 126 free now. We need 8 F + 7 D + path_const = 16 vectors = 128 slots. JUST barely doesn't fit (need 128, have 126). 2 slots short.
+
+Let me drop something else. Maybe scalar_nv (1 slot)? Doesn't matter. Need 2.
+
+Actually let me free ip_ slots (32 of them). After init, ip_ are dead.
+
+Wait we use vp_ but ip_ is dead after init. Both have 32 each. Let's drop ip_ at init - reuse a single scalar.
+Plan: Drop ip_ array (use shared scalar for init).
+[step 145] Bash: python3 << 'EOF'
+    Analysis: Still 1945. Let me try a totally different optimization: maybe the SCHEDULER can be improved. 
+
+Let me look at the priority/ordering of ready slots in the scheduler. Currently we sort by index and pick first-fit. Maybe priority by critical path or longest path would help.
+
+Actually let me think about WHY the load engine is idle in mux rounds.
+
+In round 2 mux, no gather loads. But there's NOTHING else to load. Forest values for d=2 mux are pre-loaded at init. So loads are just idle.
+
+Fo
+[step 145] Bash: bash /app/run_tests.sh 2>&1 | tail -5
+    Analysis: Still 1945. Let me try a totally different optimization: maybe the SCHEDULER can be improved. 
+
+Let me look at the priority/ordering of ready slots in the scheduler. Currently we sort by index and pick first-fit. Maybe priority by critical path or longest path would help.
+
+Actually let me think about WHY the load engine is idle in mux rounds.
+
+In round 2 mux, no gather loads. But there's NOTHING else to load. Forest values for d=2 mux are pre-loaded at init. So loads are just idle.
+
+Fo
+[step 146] Bash: python3 -c "
+    Analysis: Same cycles. Now we should have 24 more free slots. Let me check.
+Plan: Check.
+[step 147] Bash: python3 << 'EOF'
+    Analysis: 151 free now. d=3 needs 128 (8F + 7D + path_const = 16 vectors = 128 slots). Should fit!
+
+Let me add d=3 mux.
+Plan: Add d=3 mux setup and logic.
+[step 147] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: 151 free now. d=3 needs 128 (8F + 7D + path_const = 16 vectors = 128 slots). Should fit!
+
+Let me add d=3 mux.
+Plan: Add d=3 mux setup and logic.
+[step 148] Bash: python3 << 'EOF'
+    Analysis: Out of scratch by 5. Need to free 5 more slots.
+
+Let me see what to drop. Maybe drop cmp_const for k=3 since three_v exists. Actually three_v IS k=3.
+
+Hmm. Let me see if we need k=0 (zero_v already exists).
+
+Let me try not allocating npc_d3 (only need d2):
+Plan: Skip new_path_const for d=3, only d=2 needs it (since only d=2 overwrites idx_arr).
+
+Wait d=3 also overwrites idx_arr (path stored in idx_arr). So it needs new_path_const_v[3] too.
+
+Let me drop three_v alias (3 slots saved? no 
+[step 149] Bash: python3 << 'EOF'
+    Analysis: Let me skip the d=3 mux for now and see if we can get savings elsewhere. Actually, let me try with reduced data — use < 8 = use d=3 for ROUND 3 ONLY (cycle 1, not cycle 2). Save Forest values for d=3 but use only round 3. 
+
+Wait that's same scratch.
+
+Alternative: Don't use new_path_const_v for d=3. Compute idx update from idx_arr=path differently. 
+
+With d=3: path in idx_arr after subtract. After mux, path still in idx_arr. For idx update: idx_addr_new = mul_add(idx_arr=path, 2_v, pari
+[step 149] Bash: bash /app/run_tests.sh 2>&1 | tail -5
+    Analysis: Let me skip the d=3 mux for now and see if we can get savings elsewhere. Actually, let me try with reduced data — use < 8 = use d=3 for ROUND 3 ONLY (cycle 1, not cycle 2). Save Forest values for d=3 but use only round 3. 
+
+Wait that's same scratch.
+
+Alternative: Don't use new_path_const_v for d=3. Compute idx update from idx_arr=path differently. 
+
+With d=3: path in idx_arr after subtract. After mux, path still in idx_arr. For idx update: idx_addr_new = mul_add(idx_arr=path, 2_v, pari
+[step 150] Bash: bash /app/run_tests.sh 2>&1 | head -30
+    Analysis: Error after revert. Let me run with full output.
+Plan: Get full error.
+[step 151] Bash: python3 << 'EOF'
+    Analysis: I changed the mux_setup tuple from 2 elements to 3 (with D_addrs). Need to update unpacking.
+Plan: Fix unpack.
+[step 151] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: I changed the mux_setup tuple from 2 elements to 3 (with D_addrs). Need to update unpacking.
+Plan: Fix unpack.
+[step 152] Bash: grep -n 'F_v = self.alloc_scratch\|F_addr_scalar = self.alloc' /app/kernel.py
+    Analysis: Back to 1945. Let me think about how to add d=3 with limited scratch.
+
+Free slots needed for d=3:
+- 8 F vectors × 8 = 64 slots
+- 7 D vectors × 8 = 56 slots
+- 1 path_const_v (8 slots)
+- 1 new_path_const_v (8 slots) + scalar (1 slot)
+- 8 F scalar holders + 8 F addr scalars = 16 slots
+- Compare consts (vectors for k=4,5,6 -- 3*8 = 24 slots)
+
+Total: ~177 slots. Too much.
+
+We have 151 free.
+
+Let me try to drop some of the d=2 alloc that was already there. Actually `cmp_consts` for d=3 needs
+[step 153] Bash: sed -n '358,395p' /app/kernel.py
+    Analysis: Let me modify the F broadcast to only do F[0] for d>=2 (and use scalar D computation for differences).
+Plan: Refactor.
+[step 154] Bash: python3 << 'EOF'
+    Analysis: Let me rewrite to: only allocate F[0] vector for d>=2. Compute D as scalar subtraction.
+Plan: Refactor the mux setup loop.
+[step 155] Bash: bash /app/run_tests.sh 2>&1 | tail -5
+    Analysis: Now have 163 free. Let me run tests to verify correctness, then add d=3.
+Plan: Test, then add d=3.
+[step 156] Bash: python3 << 'EOF'
+    Analysis: Still 1945 (correctness OK). Now let me add d=3 mux.
+Plan: Enable d=3.
+[step 156] Bash: bash /app/run_tests.sh 2>&1 | tail -5
+    Analysis: Still 1945 (correctness OK). Now let me add d=3 mux.
+Plan: Enable d=3.
+[step 157] Bash: bash /app/run_tests.sh 2>&1 | head -20
+    Analysis: Error. Let me check.
+Plan: See error.
+[step 158] Bash: grep -n 'new_path_const_v' /app/kernel.py
+    Analysis: IndexError again. The d=3 mux scheme has issue. Let me check: I changed the path subtract to write to idx_arr for d>=2. But after d=3 mux, we need new_path_const_v[3] for idx update. We have new_path_const_v[1] and [2], not [3].
+
+Let me check.
+Plan: Add new_path_const_v[3].
+[step 159] Bash: sed -n '583,595p' /app/kernel.py
+    Analysis: The new_path_const_v is a dict computed for ALL d in MUX_DEPTHS. For d=3, it's allocated. But the idx update only triggers for `d_r == 2`. Let me check.
+Plan: Update idx update to handle d=3.
+[step 160] Bash: python3 << 'EOF'
+    Analysis: I see - it's `if is_mux and d_r == 2`. Let me change to handle d=3 too. d=3 also overwrites idx_arr with path.
+Plan: Update for d>=2.
+[step 160] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: I see - it's `if is_mux and d_r == 2`. Let me change to handle d=3 too. d=3 also overwrites idx_arr with path.
+Plan: Update for d>=2.
+[step 161] Bash: grep -n 'is_mux and d_r' /app/kernel.py
+    Analysis: Different error: incorrect output (not crash). Let me debug.
+
+The issue might be: `is_mux and d_r >= 2` triggers for d_r=2 AND d_r=3. But also maybe there's a problem in the val^=nv where I check `d_r == 2`.
+Plan: Check val^= condition.
+[step 162] Bash: python3 << 'EOF'
+    Analysis: Need to fix val^= condition to use tb_arr for d_r >= 2.
+Plan: Fix.
+[step 162] Bash: bash /app/run_tests.sh 2>&1 | tail -10
+    Analysis: Need to fix val^= condition to use tb_arr for d_r >= 2.
+Plan: Fix.
+[step 163] Bash: python3 << 'EOF'
+    Analysis: Hmm worse: 2020 (vs 1945). Adding d=3 mux made it worse.
+
+Let me check if there's a serial chain issue. The 7-step cumulative > scheme has 7-deep dep chain in mul_add. For 32 vec * 7 levels = 224 ops, at 6 valu/cy = ~38 cy. But the chain depth is 7. That creates a serial chain bottleneck.
+
+For 32 vectors with chain depth 7: each vector takes 7 sequential mul_adds plus 7 compares. 14 ops per vec. Best case all parallel: 32*14/6 = 75 cy. 
+
+But serial chain means at least 7+7=14 cy critic
+[step 163] Bash: bash /app/run_tests.sh 2>&1 | tail -5
+    Analysis: Hmm worse: 2020 (vs 1945). Adding d=3 mux made it worse.
+
+Let me check if there's a serial chain issue. The 7-step cumulative > scheme has 7-deep dep chain in mul_add. For 32 vec * 7 levels = 224 ops, at 6 valu/cy = ~38 cy. But the chain depth is 7. That creates a serial chain bottleneck.
+
+For 32 vectors with chain depth 7: each vector takes 7 sequential mul_adds plus 7 compares. 14 ops per vec. Best case all parallel: 32*14/6 = 75 cy. 
+
+But serial chain means at least 7+7=14 cy critic
+[step 164] Bash: grep -n 'wraps' /app/kernel.py
+    Analysis: Back to 1945. Final state: cycles=1945, passes test_75x but not test_100x.
+
+The required threshold is < 1250 cycles. We're at 1945. 
+
+Given the time invested, let me try ONE more major angle. Maybe I can be more clever about the bit-packed mux — using BIT EXTRACTION instead of cumulative.
+
+For d=2 with bit extraction:
+- bit_0 = path & 1
+- bit_1 = path >> 1
+- result = mul_add(bit_1, F2-F0+bit_0*K, F0+bit_0*D01)
+   where K = F0+F3-F1-F2
+   = mul_add(bit_1, intermediate_b1_term, intermedi
+[step 165] Bash: sed -n '560,605p' /app/kernel.py
+    Analysis: Let me look at the wraps branch.
+Plan: Look.
+[step 166] Bash: python3 << 'EOF'
+    Analysis: Let me modify: in wraps round, skip idx update entirely. In the FOLLOWING reset round, use fvp_v directly.
+
+Actually wait, after reset round (round 11), the idx update creates idx_addr_12. The simplified path uses `mul_add(idx_arr_OLD, 2, parity + c1m_v)`. If idx_arr_OLD is undefined (because we skipped wrap), we get garbage.
+
+UNLESS we modify reset round's idx update to use fvp_v INSTEAD of idx_arr_OLD.
+
+Let me detect 'reset round following wrap' and special-case its idx update.
+Plan:
+[step 166] Bash: bash /app/run_tests.sh 2>&1 | tail -5
+    Analysis: Let me modify: in wraps round, skip idx update entirely. In the FOLLOWING reset round, use fvp_v directly.
+
+Actually wait, after reset round (round 11), the idx update creates idx_addr_12. The simplified path uses `mul_add(idx_arr_OLD, 2, parity + c1m_v)`. If idx_arr_OLD is undefined (because we skipped wrap), we get garbage.
+
+UNLESS we modify reset round's idx update to use fvp_v INSTEAD of idx_arr_OLD.
+
+Let me detect 'reset round following wrap' and special-case its idx update.
+Plan:
+[step 167] Bash: bash /app/run_tests.sh 2>&1
+    Analysis: Down to 1940. 5 cy save. Tiny.
+
+Let me think about what else. Actually, given 1940 vs need 1250, we have a big gap.
+
+Let me run with several test seeds to make sure correctness is maintained.
+
+Then I'll consider that this might be sufficient for some thresholds (test_75x passes). Let me confirm.
+Plan: Final run.
+[step 168] Bash: echo 'Final cycles: 1940 (76.2x speedup). Passes correctness and test_75x.'
+    Analysis: Final state: 1940 cycles, 76.2x speedup. 
+- All 8 correctness tests pass.
+- test_75x (< 2000) passes.
+- test_100x (< 1500) fails. Need ~30% more reduction to pass test_100x.
+- The task requires < 1250 (~118x).
+
+Given the substantial time investment, this is a respectable result that passes most thresholds. The remaining gap to 1250 would require fundamental restructuring.
+
+Let me make sure the final code is clean and correctness-verified. The kernel passes correctness across 8 random s
+[step 169] Bash: echo 'Done - final 1940 cycles, 76.2x speedup. Task threshold (1250) not met.'
+    Analysis: Let me make one more attempt to break through. Let me think about what exactly is the critical path for the main loop.
+
+Looking at the analysis: 1940 cy. Load bound = 2656/2 = 1328. Valu bound = 8803/6 = 1467. So we're 30%+ above the maximum bound. 
+
+There's a big inter-round overhead. Let me see if I can reduce inter-round serialization.
+
+A key insight: my scheduler has STRICT dependencies. Maybe softer constraints would let it pipeline better.
+
+Actually wait - maybe the issue is depe
+[step 172] Submit: Mark task complete
+    Analysis: The task threshold of < 1250 cycles is not met. My final kernel achieves 1940 cycles (76.2x speedup). The kernel is correct and substantially optimized but does not meet the required threshold.
+Plan: Stopping here.
+[step 173] Submit: Mark task complete
+    Analysis: The task threshold (1250 cycles) was not met. I achieved 1940 cycles with 76.2x speedup. The kernel passes correctness tests but does not pass test_100x. Submitting the final state.
+Plan: Submit final state.

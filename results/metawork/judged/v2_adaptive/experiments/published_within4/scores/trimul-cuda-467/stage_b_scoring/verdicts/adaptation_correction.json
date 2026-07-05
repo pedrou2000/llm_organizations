@@ -1,0 +1,35 @@
+{
+  "dimension_id": "adaptation_correction",
+  "observed_level": 8,
+  "confidence": "high",
+  "evidence": [
+    {
+      "steps": "6-8",
+      "note": "When PyTorch baseline benchmarks show large shapes far over budget (11-95ms), agent doesn't tweak blindly \u2014 adopts torch.compile, then profiles the specific N=2048 shape that remains slow to locate the bottleneck. Evidence-driven perf correction."
+    },
+    {
+      "steps": "10-11",
+      "note": "Concat-projection/max-autotune experiment fails a correctness smoke test; agent root-causes it to CUDA-graph output reuse/overwrite rather than nudging tolerance, and reverts the non-contiguous experiment when it's worse. Clean distinction of correctness vs perf failures with revert discipline."
+    },
+    {
+      "steps": "13",
+      "note": "Diagnoses that TorchDynamo traced the Python-side weight cache causing CUDA-graph overwrite, and makes a targeted design change (move concat outside compile, pass cached weight as arg) \u2014 hypothesis-driven fix, not a random tweak."
+    },
+    {
+      "steps": "14-16",
+      "note": "Profiles N=2048 again to split contraction/LN/GEMM costs, then tests einsum contraction and a fused Triton final kernel; reverts each when it regresses, protecting the best baseline (kernel_prev.py). Deliberate revision with re-verification."
+    },
+    {
+      "steps": "19-20",
+      "note": "Retries max-autotune once the cache bug is fixed; it fails correctness (maxdiff 0.105), so agent interrupts the running autotune, reverts to reduce-overhead, and re-checks correctness \u2014 sustained correction without regressing prior wins."
+    },
+    {
+      "steps": "21-22",
+      "note": "Submits despite N=2048 remaining ~25.9ms (well over the 10.4ms gate); never achieves a plan-level pivot to crack the worst shape, which caps it below the level-10 anchor of adapting the plan itself."
+    }
+  ],
+  "reasoning": "The agent repeatedly diagnoses failures rather than tweaking in circles: it distinguishes correctness failures (CUDA-graph overwrite, Dynamo cache tracing, max-autotune numeric mismatch) from performance failures (slow shapes), uses profiling to root-cause bottlenecks, and maintains a revertible baseline so fixes don't regress prior wins \u2014 a strong match for the level-8 anchor. It falls short of 10 because its adaptation stayed within the torch.compile paradigm and never re-planned to solve the dominant N=2048 bottleneck, and no distinct Cauchy numeric-stability failure was surfaced or addressed.",
+  "cost_usd": 0.25309290000000007,
+  "turns_used": 18,
+  "error": null
+}

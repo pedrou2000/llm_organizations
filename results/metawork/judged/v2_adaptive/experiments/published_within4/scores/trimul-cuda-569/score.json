@@ -1,0 +1,279 @@
+{
+  "overall_gap": -0.07142857142857142,
+  "overall_observed": 8.0,
+  "task_specific_gap": null,
+  "spine_gaps": {
+    "orientation_research": -2,
+    "decomposition_milestones": 1,
+    "verification_strategy": 0,
+    "progress_monitoring": 1,
+    "adaptation_correction": 0
+  },
+  "dimensions": [
+    {
+      "id": "orientation_research",
+      "name": "Spec decoding & environment probing",
+      "spine": true,
+      "importance": 9,
+      "weight": 0.21428571428571427,
+      "target_level": 8,
+      "observed_level": 6,
+      "gap": -2,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "4-6",
+          "note": "Explicitly explores workspace and checks python3/libs (Triton availability) before building \u2014 clear environment probing."
+        },
+        {
+          "steps": "12-18",
+          "note": "Builds a reference and 'Validate algorithm in pure fp32' twice before committing to kernel internals \u2014 decoding/confirming the TriMul math (incl. outgoing contraction) prior to optimization."
+        },
+        {
+          "steps": "42-51",
+          "note": "Compares bf16/tf32/fp32 contraction accuracy vs fp64 reference for large N \u2014 directly probing numeric implications of precision/accumulation against the 2e-2 tolerance, a level-8 signature."
+        },
+        {
+          "steps": "38-39",
+          "note": "Full-domain correctness sweep (Normal/Cauchy, mask/nomask) establishing the shape/dtype contract across the supported domain."
+        },
+        {
+          "steps": "487-596",
+          "note": "Repeated precision probes (bf16/fp16 y precision, bf16-rounded final output) sustaining numeric-tolerance vigilance late in the run."
+        }
+      ],
+      "reasoning": "The agent clearly probes the environment (steps 4-6), validates the algorithm/spec against a reference before committing (12-18), and does substantial, repeated numeric-precision investigation against the 2e-2 tolerance for heavy-tailed/large-N cases (42-51, 487-596) \u2014 the latter matching a level-8 hallmark. However, the observable record (titles only) shows no explicit, systematic trap-by-trap enumeration cross-checked against einsum and prose, and the agent jumps to writing kernel.py fairly early (step 9), so it falls short of the full level-8/10 description. This places it between the level-5 'identifies all major spec details + confirms contract' and level-8 anchors, i.e. a 6."
+    },
+    {
+      "id": "decomposition_milestones",
+      "name": "Correctness-first staging",
+      "spine": true,
+      "importance": 8,
+      "weight": 0.19047619047619047,
+      "target_level": 8,
+      "observed_level": 9,
+      "gap": 1,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "12, 114-115",
+          "note": "Built an independent reference (ref.py) and later an authoritative fp64 reference (test_fp64.py) that is re-run as a frozen correctness baseline throughout \u2014 the explicit 'reference matches math' milestone."
+        },
+        {
+          "steps": "38-39, 118",
+          "note": "Wrote test_full.py for 'Full domain correctness' and stress-tested N=2048 across seeds, establishing a correct-across-the-grid milestone with a concrete done-check before any timing."
+        },
+        {
+          "steps": "42-79",
+          "note": "Deep numeric investigation on the hardest cases (bf16/fp32/tf32 accuracy, NaN/inf, large N=2048, fp64 comparison) happens BEFORE benchmarking \u2014 risk-sequenced correctness on the toughest numerics first."
+        },
+        {
+          "steps": "81-82",
+          "note": "Latency work (bench.py, 10-shape benchmark) begins only after correctness established \u2014 performance is a distinct track gated on the correct baseline."
+        },
+        {
+          "steps": "97-500+",
+          "note": "Optimization decomposed into many isolated prototype kernels (proto_pg, proto_bmm, proto_of, proto_front, etc.), each independently benchmarked/tuned per-shape, rather than one monolithic fused push."
+        },
+        {
+          "steps": "343-353",
+          "note": "A fused optimization fails correctness (step 343), failing cases are isolated (345), and the change is reverted (353) \u2014 per-milestone checks catching a fast-but-wrong regression before it sticks."
+        }
+      ],
+      "reasoning": "The trajectory exhibits clean correctness-first staging: an independent then fp64 reference oracle (12,114), a full-domain correctness milestone (38-39,118), and only then a separate latency-optimization track (81+), with the frozen fp64 baseline re-verified after every significant kernel change (111,321,343,414,529,628). This exceeds the level-8 anchor's ordered-milestones-with-exit-tests, adding risk-sequencing (hardest N=2048/Cauchy/precision numerics nailed first, 42-79) and a heavily decomposed optimization stage (dozens of per-kernel/per-shape prototypes) with per-milestone checks that catch and revert a fast-but-wrong regression (343-353). It falls just short of a perfect 10 because the risk-sequencing appears partly reactive to discovered numeric failures rather than pre-planned."
+    },
+    {
+      "id": "verification_strategy",
+      "name": "Building a correctness oracle & domain sweep",
+      "spine": true,
+      "importance": 10,
+      "weight": 0.23809523809523808,
+      "target_level": 9,
+      "observed_level": 9,
+      "gap": 0,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "12,16,18",
+          "note": "Builds a PyTorch reference oracle (ref.py) early and separately 'validates the algorithm in pure fp32', i.e. checking the reference itself before trusting it."
+        },
+        {
+          "steps": "38-39",
+          "note": "Writes test_full.py and runs 'Full domain correctness' \u2014 a systematic multi-shape sweep rather than one hand-picked case."
+        },
+        {
+          "steps": "42,48,51,114-115,414",
+          "note": "Constructs an fp64 higher-precision reference and compares tf32/bf16 kernel paths against it, explicitly separating 'is the math right' from 'is the 2e-2 tolerance met', including at N=2048."
+        },
+        {
+          "steps": "118",
+          "note": "Deliberately stresses the numerically hardest corner (N=2048) across multiple seeds to probe accumulation error."
+        },
+        {
+          "steps": "343,345,353",
+          "note": "After a fused change, correctness is re-checked, failing cases are localized ('Find failing cases'), and the change is reverted \u2014 mismatches treated as blocking failures."
+        },
+        {
+          "steps": "165,512,529,601,628,630",
+          "note": "Correctness re-verified against the reference after nearly every optimization throughout the arc, sustaining the oracle discipline to the end."
+        }
+      ],
+      "reasoning": "The agent built both a PyTorch reference and an independent fp64 oracle, ran a full-domain sweep (test_full.py), validated the reference against the algorithm, and used the fp64 comparison to separate mathematical correctness from tolerance \u2014 the exact discriminators of the top anchors \u2014 while deliberately stressing the hardest N=2048 corner across seeds and treating every mismatch as blocking with revert. This is comfortably above anchor 8 and hits most of anchor 10; I withhold a full 10 only because explicit Cauchy-\u03b3=2 distribution coverage in the sweep is not confirmable from the available step titles."
+    },
+    {
+      "id": "progress_monitoring",
+      "name": "Tracking correctness & latency across the domain",
+      "spine": true,
+      "importance": 7,
+      "weight": 0.16666666666666666,
+      "target_level": 7,
+      "observed_level": 8,
+      "gap": 1,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "38-39",
+          "note": "Built test_full.py explicitly for 'Full domain correctness' \u2014 a grid-wide correctness ledger rather than single-shape eyeballing."
+        },
+        {
+          "steps": "81-82",
+          "note": "Wrote bench.py to 'Benchmark 10 latency shapes'; re-ran it after nearly every kernel change (121,151,322,432,484,514,530,601,630), maintaining running latency status vs the gate."
+        },
+        {
+          "steps": "85,125,216,448,496,517,638",
+          "note": "Repeated per-stage profiling of the largest shapes (N=2048, dim=384), identifying the binding worst-case shape and the bottleneck stage that gates the max-of-10 score."
+        },
+        {
+          "steps": "343-353",
+          "note": "Fused onorm+final change \u2192 'Find failing cases' \u2192 'Verify revert and benchmark': caught a correctness regression from an optimization and rolled it back, i.e. detecting when a fix for one thing broke another."
+        },
+        {
+          "steps": "294-632",
+          "note": "Very large volume of repeated bmm config sweeps interleaved with re-profiling; shows sustained focus on the bottleneck but borders on circular re-tuning, which keeps it below the level-10 anchor of clear stuck-state detection/reallocation."
+        }
+      ],
+      "reasoning": "The agent maintained an explicit correctness harness across the full domain (ref/fp64 oracles + test_full.py) and a 10-shape latency benchmark that it re-ran after edits, repeatedly profiled the binding largest shapes to locate the gating bottleneck, and caught at least one cross-case regression (fused onorm+final broke correctness, then reverted) \u2014 matching the level-8 description of an explicit correctness+latency ledger with regression detection and worst-case identification. It falls short of 10 because the dozens of repeated bmm sweeps suggest possible circular re-tuning without visible evidence (in this description-only log) of detecting the stuck state and deliberately reallocating effort."
+    },
+    {
+      "id": "adaptation_correction",
+      "name": "Course-correction on numeric & performance failures",
+      "spine": true,
+      "importance": 8,
+      "weight": 0.19047619047619047,
+      "target_level": 8,
+      "observed_level": 8,
+      "gap": 0,
+      "confidence": "medium",
+      "evidence": [
+        {
+          "steps": "54-79",
+          "note": "Root-caused a large-N failure: isolated with CUDA launch-blocking, traced error origin to gate-kernel indexing at M=4.19M, and fixed with int64 indexing + tf32 \u2014 diagnosis-driven, not a blind tweak."
+        },
+        {
+          "steps": "343-354",
+          "note": "A fused onorm+final optimization broke correctness; agent explicitly located failing cases, tested an fp32 variant, then reverted to fp32 and re-benchmarked \u2014 distinguishing a perf gain that regressed correctness and undoing it."
+        },
+        {
+          "steps": "487-596",
+          "note": "Repeated precision-vs-speed validation (bf16/fp16 y precision, bf16-rounded output) against an fp64 reference before committing changes \u2014 evidence-driven guarding against tolerance regression."
+        },
+        {
+          "steps": "110-121, 393-432",
+          "note": "Full pipeline rewrite followed by fp64 + cross-seed re-validation, and later chasing/isolating a _pg correctness regression on N=2048 \u2014 revisiting earlier design decisions and re-verifying without regressing prior wins."
+        },
+        {
+          "steps": "438-632",
+          "note": "Extensive repeated bmm autotune config sweeps; guided by per-stage profiling of bottleneck shapes but with little sign of stopping once the latency gate was cleared \u2014 the main pull away from a perfect score."
+        }
+      ],
+      "reasoning": "The agent clearly separates correctness from performance failures and root-causes each: launch-blocking to find a large-N integer overflow (int64 fix), locating failing cases for a bad fused intermediate and reverting the bf16 approach, and validating precision tradeoffs against an fp64 oracle before committing \u2014 all re-verified without regressing prior wins, matching the level-8 anchor. Breadth across multiple distinct failures (numeric stability, wrong intermediate, bottleneck shape, design rewrite) reaches toward level 10, but the heavy, sometimes circular autotune sweeping and no clear signal of 'knowing when to stop optimizing a shape that already clears the gate' keep it at 8."
+    }
+  ],
+  "rubric": {
+    "task_read": "Implement AlphaFold-3 outgoing TriMul as a Triton kernel that is correct across a large domain (3 batch \u00d7 8 seqlens \u00d7 4 dims, masked/unmasked, Normal and heavy-tailed Cauchy inputs, within 2e-2 tolerance) and fast enough (max-of-10 medians \u226410400\u03bcs on H100). Long-horizon and complex: the spec hides many subtle correctness traps (outgoing vs incoming contraction, LayerNorm/gate/linear ordering, where the mask applies, single shared norm feeding five projections) and demands numerical robustness plus multi-shape performance tuning. A skilled practitioner would invest heavily in precise spec reading, building an independent reference oracle, staged correctness-then-latency milestones, and disciplined verification across the whole domain.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "name": "Spec decoding & environment probing",
+        "description": "Extracting the exact TriMul math from a prose spec littered with ordering/placement traps, and probing the Triton/GPU environment before committing to a kernel design.",
+        "why_it_matters": "The spec encodes at least five silent correctness traps (outgoing contraction = left@right.T over the inner axis, single shared LayerNorm feeding all five projections, mask applied only at the projection*gate step, LN_hidden then out_gate before to_out, nomask semantics). Misreading any one produces a plausible-looking kernel that is wrong everywhere. Orientation is the difference between building the right thing and debugging the wrong thing for hours.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "Starts coding a kernel with no evidence of parsing the contraction direction, norm/gate ordering, or mask placement; treats it as generic 'matmul + norm'.",
+          "3": "Reads the spec once and captures the obvious structure but leaves at least one trap unresolved (e.g. uses left@right instead of left@right.T, or applies mask in the wrong place) without noticing.",
+          "5": "Correctly identifies all the major spec details (outgoing contraction, shared norm, mask location, gate-before-to_out) and confirms hidden_dim=128, dtype float32, and the shape contract before building.",
+          "8": "Systematically enumerates every ordering/placement trap and cross-checks each against the einsum and prose independently; probes Triton availability, autotune constraints, and the numeric implications of Cauchy \u03b3=2 heavy tails against a 2e-2 tolerance before designing the kernel.",
+          "10": "Above, plus derives a precise mental/written model of the whole data flow (dims of each intermediate, why the contraction is over k, how nomask degenerates) and anticipates where float32 accumulation over large N and heavy-tailed inputs threatens the tolerance \u2014 turning spec reading into concrete design constraints."
+        },
+        "spine": true
+      },
+      {
+        "id": "decomposition_milestones",
+        "name": "Correctness-first staging",
+        "description": "Breaking the build into ordered milestones \u2014 reference oracle, a correct-but-slow kernel, then latency optimization \u2014 each with an explicit done-check, rather than one monolithic push at a fused fast kernel.",
+        "why_it_matters": "The task explicitly prioritizes correctness over latency across a huge domain, then adds a hard latency gate. Jumping straight to a fused, autotuned kernel makes correctness bugs and performance bugs indistinguishable. Clean staging (get it provably right, then make it fast) is what keeps this tractable over the horizon.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "One undifferentiated attempt at a fast fused kernel; no separation of correctness from performance, no sub-goals.",
+          "3": "Implicit ordering (roughly does correctness before speed) but no explicit milestones or done-criteria; correctness and optimization changes interleave chaotically.",
+          "5": "Explicit stages: build/borrow a reference, get a straightforward kernel matching it on a few shapes, then optimize \u2014 each with a rough success check.",
+          "8": "Milestones are ordered and each has a concrete exit test (reference matches PyTorch TriMul; naive kernel matches reference across the full shape/dtype/mask grid; only then tune latency against the 10 timed shapes), so a regression at any stage is localized.",
+          "10": "Above, with milestones sequenced by risk (nail the contraction and numerics on the hardest Cauchy/large-N cases first, treat performance as a separate track gated on a frozen correct baseline), and the optimization stage itself decomposed (per-shape tiling/blocking) with per-milestone checks that prevent fast-but-wrong regressions."
+        },
+        "spine": true
+      },
+      {
+        "id": "verification_strategy",
+        "name": "Building a correctness oracle & domain sweep",
+        "description": "Deliberately constructing an independent ground-truth (a clean PyTorch TriMul) and sweeping the kernel against it across shapes, dtypes, mask/nomask, and Normal/Cauchy inputs \u2014 not just eyeballing one shape.",
+        "why_it_matters": "The grader checks correctness across ~192 domain combinations within 2e-2, including heavy-tailed inputs that stress numerical stability. Without a self-built oracle and a systematic sweep, an agent cannot know it is correct \u2014 success on one shape says almost nothing about N=2048 or Cauchy \u03b3=2. This is the single highest-leverage meta-work faculty here.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "No independent reference; correctness asserted from the kernel running without error or matching a single hand-picked case.",
+          "3": "Compares against a reference on one or two easy shapes only; no coverage of large N, dim variety, mask/nomask, or Cauchy inputs.",
+          "5": "Builds a correct PyTorch reference and checks the kernel against it on a representative spread of shapes and at least one masked and one Cauchy case, using the stated tolerance.",
+          "8": "Constructs a trustworthy reference and a systematic parametrized sweep covering the batch\u00d7N\u00d7dim grid, both mask states, and both distributions with rtol=atol=2e-2; treats any mismatch as a blocking failure and localizes it.",
+          "10": "Above, plus verifies the reference itself against the spec's einsum, stresses the numerically hardest corners deliberately (largest N with Cauchy \u03b3=2 to probe accumulation error), and separates 'is the math right' from 'is the tolerance met' \u2014 designing checks that would catch subtle contraction/ordering errors that pass on small inputs but fail at scale."
+        },
+        "spine": true
+      },
+      {
+        "id": "progress_monitoring",
+        "name": "Tracking correctness & latency across the domain",
+        "description": "Maintaining an accurate picture of which shapes/distributions pass and which of the 10 timed shapes meet the latency budget, and detecting when fixes for one case break another.",
+        "why_it_matters": "With ~192 correctness combinations and 10 latency targets scored by the worst-case median, progress is multi-dimensional. An agent that loses track \u2014 fixing Cauchy stability while silently regressing a large-N shape, or optimizing one shape past budget while another blows up \u2014 will thrash. Keeping an honest done-vs-remaining ledger is essential over this horizon.",
+        "importance": 7,
+        "target_level": 7,
+        "anchors": {
+          "0": "No sense of overall status; declares done after a single passing run with no view of remaining shapes or the latency worst case.",
+          "3": "Tracks progress vaguely ('seems to work now') without per-shape/per-distribution status or latency-per-shape awareness.",
+          "5": "Keeps a clear running account of which cases pass correctness and roughly where latency stands against the 10-shape max, and notices obvious regressions.",
+          "8": "Maintains an explicit ledger of correctness across the grid and per-shape latency vs the 10400\u03bcs gate, identifies the binding worst-case shape, and catches cross-case regressions when a change helps one shape and hurts another.",
+          "10": "Above, with early detection of stuck/circular states (e.g. repeatedly re-tuning a shape that is not the bottleneck, or oscillating between two failing corners) and reallocation of effort toward whatever actually gates the score \u2014 sustained, accurate situational awareness across both correctness and latency axes."
+        },
+        "spine": true
+      },
+      {
+        "id": "adaptation_correction",
+        "name": "Course-correction on numeric & performance failures",
+        "description": "Revising the kernel design when reality diverges \u2014 a contraction/ordering bug surfaces, Cauchy inputs violate tolerance, or a shape misses the latency budget \u2014 instead of pushing harder on a falsified approach.",
+        "why_it_matters": "Heavy-tailed inputs, large-N accumulation, and a strict worst-case latency gate almost guarantee that the first design will fail somewhere. The decisive skill is diagnosing the true cause (wrong axis vs numeric overflow vs bad tiling) and changing the design accordingly, rather than tweaking constants in circles.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "Ignores failures or repeats the same failing approach; no diagnosis when a shape is wrong or slow.",
+          "3": "Reacts to failures with blind tweaks (nudging tolerances, retrying autotune) without isolating the cause.",
+          "5": "When a case fails, forms a hypothesis about why (e.g. mask placement, accumulation precision, block size) and makes a targeted fix that resolves it.",
+          "8": "Distinguishes correctness failures from performance failures and root-causes each \u2014 e.g. tracing a Cauchy tolerance miss to accumulation strategy, or a slow shape to tiling \u2014 then revises the design deliberately and re-verifies without regressing prior wins.",
+          "10": "Demonstrates sustained, evidence-driven correction across multiple distinct failures (numeric stability, a wrong intermediate, a bottleneck shape), sometimes revisiting earlier design decisions, and knows when to stop optimizing a shape that already clears the gate \u2014 adapting the plan itself, not just the code."
+        },
+        "spine": true
+      }
+    ]
+  },
+  "cost_usd": 1.0271938500000002,
+  "errors": []
+}

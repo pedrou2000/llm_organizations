@@ -1,0 +1,337 @@
+{
+  "overall_gap": 0.43137254901960786,
+  "overall_observed": 8.490196078431373,
+  "task_specific_gap": 2.0,
+  "spine_gaps": {
+    "orientation_research": 0,
+    "decomposition_milestones": 0,
+    "verification_strategy": 0,
+    "progress_monitoring": 1,
+    "adaptation_correction": 0
+  },
+  "dimensions": [
+    {
+      "id": "orientation_research",
+      "name": "ISA / simulator / problem reverse-engineering",
+      "spine": true,
+      "importance": 10,
+      "weight": 0.19607843137254902,
+      "target_level": 9,
+      "observed_level": 9,
+      "gap": 0,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "2-6",
+          "note": "Read problem.py, kernel.py, run_tests.sh and submission_tests.py fully before editing; correctly derived the actual computation (2047 nodes, 16 rounds, 6 hash stages, next_idx/parity formula, wrap) \u2014 meets/exceeds the level-5 anchor at the outset."
+        },
+        {
+          "steps": "15",
+          "note": "Correctly extracted simulator semantics: reads all inputs then applies writes at cycle end, deriving RAW/WAR bundle constraints \u2014 precise cost/behavior model, not a guess."
+        },
+        {
+          "steps": "26-30",
+          "note": "Measured actual slot utilization per bundle (load 0.99/2, valu 3.15/6), identified engines and SLOT_LIMITS, and used them to reason about bottlenecks \u2014 explicit model of slots/units/SIMD width (anchor 8)."
+        },
+        {
+          "steps": "96-127",
+          "note": "Probed the simulator with small experiments: ran an h=4 test, dumped bundle instructions, traced idx_arr values at specific PCs to confirm machine behavior and localize bugs \u2014 experiment-driven, self-correcting orientation (toward anchor 10)."
+        },
+        {
+          "steps": "132-134,143",
+          "note": "Continued re-probing during optimization (per-cycle load-idle analysis, round-transition inspection) to refine understanding of what limits parallelism, sustained to the end of the trajectory."
+        }
+      ],
+      "reasoning": "The agent built a precise, explicit model of the machine (engines, SLOT_LIMITS, per-bundle cost, SIMD width 8, gather mechanism, hash data dependencies, and the simulator's read-then-write semantics) before and during optimization, and repeatedly probed the simulator with targeted experiments (bundle dumps, slot-utilization counts, small h=4 traces) whenever behavior surprised it \u2014 squarely matching anchor 8 and reaching toward 10 by tying observations to per-engine theoretical floors and continuously identifying what limits parallelism. It stops short of a full 10 because instruction latencies were never explicitly probed and the operational spec emerged implicitly through debugging rather than as a deliberate complete derivation."
+    },
+    {
+      "id": "decomposition_milestones",
+      "name": "Staged optimization plan with correctness gates",
+      "spine": true,
+      "importance": 9,
+      "weight": 0.17647058823529413,
+      "target_level": 8,
+      "observed_level": 8,
+      "gap": 0,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "6-8",
+          "note": "Before writing any optimized code, the agent laid out an ordered, machine-aware plan: keep batch state in scratch (eliminate loads), vectorize with VLEN=8, software-pipeline, gather via load_offset, special-case round 0 \u2014 an explicit staged decomposition rather than an ad-hoc 'make it fast' push."
+        },
+        {
+          "steps": "16, 29-30",
+          "note": "Executed as discrete measured milestones each gated by run_tests: correct vectorized baseline (4807), then per-round work reduction, then list scheduler, then load-packing fix (2412). Each stage landed and measured before the next, with running speedup tracking."
+        },
+        {
+          "steps": "30-36",
+          "note": "Computed theoretical load-bound (4181/2=2091) and valu-bound (13312/6=2222) to decide the NEXT milestone target; identified valu op count as the lever and applied multiply_add fusion. The decomposition is being re-prioritized by measured bottleneck, not fixed upfront."
+        },
+        {
+          "steps": "63, 136",
+          "note": "Explicitly maps stages to a cycle budget toward <1250: 'to go below 1250 we need <2500 loads; 3928-2500=1428 loads to cut; need to mux rounds 1-5.' This is milestone-to-budget mapping sequenced by expected payoff \u2014 the level-10 signature."
+        },
+        {
+          "steps": "109-112, 163-164",
+          "note": "Evidence-driven revision of the plan: d=2 mux made cycles WORSE (1968 vs 1958) and d=3 mux worse still (2020 vs 1945); agent reverted both. Correctness-preserving transforms were independently measurable and revertible, and the decomposition adjusted as measurements revealed serial-chain costs."
+        },
+        {
+          "steps": "144-164",
+          "note": "Late-game milestone discipline degraded somewhat: repeated scratch-juggling to squeeze in d=2/d=3 mux for marginal or negative gains, chasing 5-10 cycle wins rather than reordering toward the dominant inter-round-bubble bottleneck it had identified."
+        }
+      ],
+      "reasoning": "The agent decomposed the 118x gap into a genuine ordered sequence \u2014 correct vectorized baseline \u2192 op-count reduction \u2192 list scheduler \u2192 load-packing \u2192 op fusion \u2192 special/reset rounds \u2192 mux \u2014 with each milestone gated by a run_tests cycle measurement and an estimated cycle impact, and the plan clearly reflected the machine's real bottlenecks (load-bound vs valu-bound). It repeatedly mapped stages to a cycle budget toward <1250 and re-prioritized as measurements revealed which stage dominated, reverting transforms that failed to pay off \u2014 matching the level-8 anchor and touching level-10's evidence-evolving decomposition. It falls short of a clean 10 because the per-stage budgeting was often post-hoc and the late trajectory drifted into marginal, thrashy scratch-juggling rather than a disciplined payoff-ordered attack, so I place it at 8."
+    },
+    {
+      "id": "verification_strategy",
+      "name": "Correctness verification beyond the canonical test",
+      "spine": true,
+      "importance": 9,
+      "weight": 0.17647058823529413,
+      "target_level": 8,
+      "observed_level": 8,
+      "gap": 0,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "10-34",
+          "note": "Runs run_tests.sh after nearly every edit, confirming both correctness and cycle count at each optimization stage \u2014 solidly above the anchor-5 'after significant changes' bar."
+        },
+        {
+          "steps": "15,46,79,92",
+          "note": "Correctness failures caught by the test are treated as blocking; agent halts optimization to debug rather than assuming the transform was safe."
+        },
+        {
+          "steps": "94-103",
+          "note": "Builds self-constructed checks: runs a smaller synthetic input (forest_height=4) and traces intermediate idx_arr state per-pc against hand-derived expected idx_addr sequences \u2014 a diff-against-reference on a self-made edge input, matching anchor 8."
+        },
+        {
+          "steps": "95,135",
+          "note": "Per-transform correctness isolation: disables d=2 mux to confirm d=1 still passes (1958), and compares 'without mux (2009)' vs 'with d=1 mux (1956)' to attribute both cycle effect and correctness to a single transform."
+        },
+        {
+          "steps": "167",
+          "note": "Explicitly runs several test seeds near the end to confirm correctness is maintained across randomized inputs \u2014 deliberate robustness check beyond the canonical case (though a one-off rather than systematic)."
+        }
+      ],
+      "reasoning": "The agent re-ran run_tests.sh (which covers randomized-seed correctness plus cycle thresholds) after virtually every semantic-affecting change and treated correctness failures as hard gates, exceeding anchor 5. Beyond the canonical test it built additional self-constructed checks \u2014 small-input tracing with intermediate-state comparison against hand-derived expected values (94-103), transform-isolation toggles (95,135), and an explicit multi-seed run (167) \u2014 which are the hallmarks of anchor 8. It does not reach anchor 10 because the reference-diffing was largely reactive debugging and the multi-seed robustness check was a single late act rather than a systematic proactive regime."
+    },
+    {
+      "id": "progress_monitoring",
+      "name": "Cycle-count trajectory and thrash detection",
+      "spine": true,
+      "importance": 8,
+      "weight": 0.1568627450980392,
+      "target_level": 8,
+      "observed_level": 9,
+      "gap": 1,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "16-29",
+          "note": "Continuous cycle+speedup tracking (4807/30.7x \u2192 4407 \u2192 4234/34.9x \u2192 2412/61x) with explicit distance-to-1250 and theoretical load-bound math at each step."
+        },
+        {
+          "steps": "30-63",
+          "note": "Maintains transform\u2192delta ledger and reconciles measured cycles against computed load/valu bounds ('2174, load bound 2092, 6% over'; 'load 1.87/2=94%'), knowing exactly which change produced which gain."
+        },
+        {
+          "steps": "74-117",
+          "note": "Detects that d=2 mux made it WORSE by 10 cycles (1968 vs 1958) and reverts; recognizes shifting bottleneck (load\u2192valu) and small fractional gains vs theoretical estimate."
+        },
+        {
+          "steps": "138-167",
+          "note": "Tracks 1945, tries d=3 (2020, worse) and reverts, notes 'tiny' 5-cycle gains \u2014 recognizing plateau and diminishing returns on the mux line of attack."
+        },
+        {
+          "steps": "168-173",
+          "note": "Accurately reports final 1940 (76.2x), that it passes test_75x but fails test_100x and misses the 1250 target \u2014 no premature victory; picture of standing is exact."
+        }
+      ],
+      "reasoning": "The agent kept a precise, sustained ledger of cycle count, speedup, and distance to the 1250 target across the entire long trajectory, explicitly attributing gains/losses to specific transforms and reverting changes that regressed the number (d=2, d=3 mux). It repeatedly reconciled measured cycles against computed load/valu theoretical bounds per milestone and detected plateaus, matching anchor 8 and reaching toward 10. It falls just short of a perfect 10 because it churned considerably on the d=2/d=3 mux approach with repeated failed edits before abandoning it \u2014 though this churn was itself tracked and consciously reverted rather than blind, landing the observed level at 9."
+    },
+    {
+      "id": "adaptation_correction",
+      "name": "Revising approach when transforms fail or mislead",
+      "spine": true,
+      "importance": 8,
+      "weight": 0.1568627450980392,
+      "target_level": 8,
+      "observed_level": 8,
+      "gap": 0,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "15-16",
+          "note": "Correctness broke after first vectorization; agent diagnosed the simulator's read-all-then-write semantics and the RAW/WAR packing constraint, corrected its model of the machine rather than patching blindly."
+        },
+        {
+          "steps": "26-29",
+          "note": "Profiled engine utilization, found load engine idle at ~1/bundle, diagnosed the root cause (gather-address dependency), and fixed it \u2014 evidence-driven correction dropping 4234\u21922412."
+        },
+        {
+          "steps": "54-57",
+          "note": "WAR soft-dependency experiments produced 'No change'; agent recognized the assumption was wrong ('WAR was not the bottleneck') and stopped pursuing it instead of entrenching."
+        },
+        {
+          "steps": "76,133",
+          "note": "Explicitly compared falsified predictions to actual results (mux saved 53 cy vs estimated 235), revising the cost model to attribute the shortfall to load-idle waste in reset/mux rounds."
+        },
+        {
+          "steps": "109-113,163-164",
+          "note": "d=2 mux (1968) and d=3 mux (2020) each made cycles WORSE; agent diagnosed serial mul_add dependency chains and cleanly reverted to the 1945 known-good state each time."
+        },
+        {
+          "steps": "120-128",
+          "note": "Scratch-reuse (ip_/vp_) broke correctness; agent traced instruction-level addresses to find the wrong vload pointer, then reverted to 1956 \u2014 clean recovery preserving correct state."
+        },
+        {
+          "steps": "147-163",
+          "note": "Sustained persistence on the mux strategy despite repeated failures to close the gap; never decisively pivots to a fundamentally different approach, keeping it below the top anchor."
+        }
+      ],
+      "reasoning": "The agent repeatedly treats falsified predictions as signals to revise its cost model (steps 54, 76, 133), reverts cleanly to known-good cycle counts after every broken or unhelpful change (steps 55, 113, 128, 164), and diagnoses WHY expectations were wrong via engine-utilization profiling \u2014 matching the level-8 description of clean reverts plus model revision without sunk-cost entrenchment on individual transforms. It falls short of 10 because, while individual transforms are handled well, the agent circles the same mux-based load-reduction strategy for a very long stretch (steps 74-163) without a decisive whole-strategy pivot, showing some sunk-cost persistence rather than systematic re-sequencing."
+    },
+    {
+      "id": "performance_modeling",
+      "name": "Quantitative cost modeling toward the cycle budget",
+      "spine": false,
+      "importance": 7,
+      "weight": 0.13725490196078433,
+      "target_level": 7,
+      "observed_level": 9,
+      "gap": 2,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "6-7",
+          "note": "Opening: computes 4096 total iterations, notes VLEN=8 SIMD width and 2 load slots, and reasons that per-round gather loads set a floor \u2014 early quantitative framing toward the <1250 budget."
+        },
+        {
+          "steps": "16,26,30",
+          "note": "Builds explicit theoretical bounds: 'X load slots / 2' and 'Y valu slots / 6', takes the max as the floor, and compares to measured cycles ('2412 vs 2222, so tight') to identify the load engine as the dominant consumer."
+        },
+        {
+          "steps": "63",
+          "note": "Uses the gap between measured (2095) and load-bound (1964) plus the target to derive exactly how many loads must be cut ('need <2500 loads, cut 1428, mux rounds 1-5 saves ~1218') \u2014 model-driven transform selection."
+        },
+        {
+          "steps": "76,110,139",
+          "note": "After each mux transform, recomputes both engine bounds and detects the bottleneck shifting from load-bound to valu-bound, quantifying the fraction of theoretical savings actually realized (761 loads saved but only 53 cycles)."
+        },
+        {
+          "steps": "111,142,163",
+          "note": "Critical-path reasoning: identifies the serial mul_add dependency chain (depth 4, then 7) in the mux tree as the reason d=2/d=3 mux gives poor returns and even regresses, computing chain-depth-limited cycle floors."
+        },
+        {
+          "steps": "132-134,1443",
+          "note": "Quantifies ~349 load-idle cycles concentrated around reset/mux rounds and the 30% overhead above the max engine bound, using this to reason about remaining headroom and near-optimality."
+        }
+      ],
+      "reasoning": "The agent maintained an explicit, continuously-updated cost model tying instruction counts to engine slot limits (load 2/cy, valu 6/cy) and SIMD width (VLEN=8), derived theoretical lower bounds, and used the measured-vs-floor gap to prioritize each transform \u2014 squarely matching anchor 8 and extending into anchor 10 with critical-path/serial-chain analysis and recognition of diminishing returns. It falls just short of a perfect 10 because the model's predictive accuracy was imperfect (repeatedly over-estimating transform savings and leaving a large ~30% overhead it could partly but not fully attribute), so it never achieved a tight enough model to cleanly certify near-optimality. This places it at a strong 9."
+    }
+  ],
+  "rubric": {
+    "task_read": "The agent must reverse-engineer an undocumented custom VLIW SIMD ISA and its simulator (problem.py), understand the kernel's computation well enough to preserve correctness, then rewrite kernel.py to go from 147,734 cycles to under 1,250 \u2014 a ~118x speedup \u2014 while staying correct across randomized inputs and honoring slot limits and the 'no cheating' rules. This is an extremely long-horizon, high-difficulty optimization task where success hinges on deep orientation, staged decomposition (correct\u2192vectorized\u2192bundle-packed\u2192pipelined), a self-built verification loop, and quantitative reasoning about where cycles go. Nearly every meta-work faculty is exercised near its ceiling.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "name": "ISA / simulator / problem reverse-engineering",
+        "description": "Understanding the VLIW ISA, the simulator's cost model, slot limits, hash stages, and the actual computation the kernel performs \u2014 before and while optimizing.",
+        "why_it_matters": "Nothing here is documented for the agent's convenience; the ISA, how bundles are costed, SLOT_LIMITS, and the reference computation must be extracted from problem.py and the reference kernel. Every optimization decision and every correctness guarantee depends on an accurate model of the machine. Acting on a guessed ISA guarantees wasted cycles or wrong results.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "Starts editing kernel.py without reading problem.py or the reference kernel; guesses at instructions.",
+          "3": "Skims problem.py; identifies a few opcodes but misunderstands the cost model or slot limits; no grasp of what the kernel actually computes.",
+          "5": "Reads problem.py and the reference kernel; correctly identifies the available ops, how cycles are counted per bundle, SLOT_LIMITS, and the high-level computation (forest/rounds/hash-stages) \u2014 enough to start correctly.",
+          "8": "Builds a precise, explicit model: which slots/units exist, per-bundle cost rules, data dependencies in the hash stages, SIMD width, and the exact contract the reference kernel satisfies; probes the simulator with small experiments to confirm ambiguous behavior.",
+          "10": "Derives a near-complete operational spec of the machine \u2014 instruction latencies, slot contention, what limits parallelism \u2014 and ties it directly to a theoretical cycle floor, re-probing the simulator whenever behavior surprises them; orientation is deep, experiment-driven, and continuously refined as optimization exposes new unknowns."
+        },
+        "spine": true
+      },
+      {
+        "id": "decomposition_milestones",
+        "name": "Staged optimization plan with correctness gates",
+        "description": "Breaking the 118x effort into an ordered sequence of milestones (e.g. correct baseline \u2192 vectorize batch \u2192 pack bundles to slot limits \u2192 software-pipeline), each with a defined cycle/correctness checkpoint.",
+        "why_it_matters": "A single undifferentiated 'make it fast' push against a 118x gap thrashes. The task naturally decomposes into progressively more aggressive transforms, each of which must be landed and measured before the next. Ordering (correctness first, then coarse wins, then fine scheduling) is what keeps the work tractable.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "No structure; edits ad hoc, chasing whatever comes to mind, mixing correctness and speed changes in one blob.",
+          "3": "Vague intent to 'vectorize and pack bundles' but no ordered milestones or per-stage targets; changes are entangled.",
+          "5": "A sensible ordered plan: get a correct rewrite, then vectorize across the batch, then pack bundles, verifying at each step, with a rough cycle target per stage.",
+          "8": "Clear milestone hierarchy each with an explicit done-check and expected cycle impact; correctness-preserving transforms sequenced so each is independently measurable and revertible; the plan reflects the machine's actual bottlenecks.",
+          "10": "A milestone structure that maps each stage to an estimated cycle contribution against a budget toward <1250, sequenced by expected payoff and risk, adjusted as measurements reveal which stages actually dominate \u2014 the decomposition itself evolves with evidence rather than being fixed upfront."
+        },
+        "spine": true
+      },
+      {
+        "id": "verification_strategy",
+        "name": "Correctness verification beyond the canonical test",
+        "description": "Deliberately designing checks that the kernel stays correct across randomized inputs (not just the canonical case) and that each optimization preserves semantics, using run_tests.sh and self-built checks.",
+        "why_it_matters": "The task explicitly requires correctness on randomized inputs; aggressive VLIW/SIMD transforms are easy to get subtly wrong (off-by-one lanes, wrong slot, stale register). Without a habit of re-verifying after each transform and against varied inputs, the agent can chase a low cycle count that silently fails the hidden correctness bar.",
+        "importance": 9,
+        "target_level": 8,
+        "anchors": {
+          "0": "Never runs run_tests.sh, or only checks the cycle number and ignores correctness; assumes transforms are safe.",
+          "3": "Runs the provided test occasionally; treats a single canonical pass as proof; no thought to randomized-input robustness.",
+          "5": "Runs run_tests.sh after significant changes, confirms both correctness and cycles, and re-checks after each optimization stage.",
+          "8": "Verifies after every semantic-affecting change and builds additional checks (e.g. comparing kernel output to the reference on self-generated varied inputs, isolating a transform to confirm it alone preserved results) rather than trusting the canonical case.",
+          "10": "Runs a disciplined verification regime: diff-against-reference on many self-constructed edge inputs, per-transform correctness isolation, and guards against the specific ways VLIW scheduling can corrupt state \u2014 catching correctness regressions the provided test would miss before they compound."
+        },
+        "spine": true
+      },
+      {
+        "id": "progress_monitoring",
+        "name": "Cycle-count trajectory and thrash detection",
+        "description": "Maintaining an accurate picture of current cycles vs the 1250 target, which optimizations landed, and detecting when effort has stalled or is circling.",
+        "why_it_matters": "Over a long optimization with many transforms, the agent must know its exact standing against the target, which changes helped, and when it is stuck re-trying variants that don't move the number. Losing this picture leads to repeating failed attempts or declaring victory prematurely.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "No tracking of cycle counts over time; can't say whether recent changes helped or hurt.",
+          "3": "Notices the current number but keeps no history; occasionally repeats changes already tried.",
+          "5": "Tracks cycle count across attempts and knows distance to the 1250 target and roughly which change produced which gain.",
+          "8": "Maintains a clear ledger of transform\u2192cycle-delta, recognizes when a line of attack has plateaued, and redirects effort instead of grinding; distinguishes 'done enough' from 'more headroom' deliberately.",
+          "10": "Continuously reconciles measured cycles against an expected budget per milestone, promptly flags stalls/circular debugging, and reallocates effort to the highest-remaining-payoff bottleneck \u2014 never loses the plot across a very long trajectory or churns on exhausted approaches."
+        },
+        "spine": true
+      },
+      {
+        "id": "adaptation_correction",
+        "name": "Revising approach when transforms fail or mislead",
+        "description": "Changing the optimization plan or ISA model when a transform breaks correctness, fails to reduce cycles as predicted, or reveals a wrong assumption about the machine.",
+        "why_it_matters": "A 118x speedup will involve dead ends: an optimization that the cost model predicted would help but doesn't, or that violates a slot limit or the anti-cheating rules. The agent must revert cleanly and rethink rather than barrel ahead on a falsified assumption or entrench a broken change.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "Ignores contradictory results; keeps pushing a broken or ineffective approach; never reverts.",
+          "3": "Reacts to failures by patching symptoms without questioning the underlying assumption; reverts messily or not at all.",
+          "5": "When a change breaks correctness or doesn't help, backs it out and tries a different tactic; updates understanding of the machine when surprised.",
+          "8": "Treats a falsified prediction as a signal to revise the cost model and plan; reverts cleanly, diagnoses why the expectation was wrong, and redirects \u2014 avoiding both sunk-cost persistence and flailing.",
+          "10": "Systematically converts surprises into corrected machine models and re-sequenced plans; recognizes when a whole strategy (not just a transform) is wrong and pivots decisively, while preserving hard-won correct state \u2014 sustained, evidence-driven course-correction across the full effort."
+        },
+        "spine": true
+      },
+      {
+        "id": "performance_modeling",
+        "name": "Quantitative cost modeling toward the cycle budget",
+        "description": "Building a quantitative model of where cycles are spent and what the theoretical floor is (given slot limits, SIMD width, dependency chains), and using it to target the <1250 budget.",
+        "why_it_matters": "This is an aggressive numeric target, not a vague 'faster'. Reaching <1250 from 147,734 requires reasoning about the achievable lower bound \u2014 how many bundles the computation must take given parallelism and slot constraints \u2014 to know which optimizations can possibly close the gap and when the agent is near the floor. This quantitative bottleneck analysis is distinct from generic progress tracking or correctness checking.",
+        "importance": 7,
+        "target_level": 7,
+        "anchors": {
+          "0": "Optimizes blindly with no notion of where cycles go or what's achievable.",
+          "3": "Hand-wavy sense that 'vectorizing helps' without quantifying the dominant cost or any floor.",
+          "5": "Identifies the dominant cycle consumers (e.g. per-round hash-stage work \u00d7 batch) and reasons roughly about how much a transform can save.",
+          "8": "Constructs an explicit cost model tying instruction counts and slot occupancy to cycles, estimates a theoretical lower bound, and uses the gap between measured and floor to prioritize the next optimization.",
+          "10": "Derives a tight lower-bound cycle model from slot limits, SIMD width, and critical-path dependencies, uses it to decide which transforms are worth attempting and to recognize when the kernel is near-optimal \u2014 turning a blind search into a directed descent toward the budget."
+        },
+        "spine": false
+      }
+    ]
+  },
+  "cost_usd": 1.5824056499999999,
+  "errors": []
+}

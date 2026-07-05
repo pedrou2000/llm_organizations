@@ -1,0 +1,31 @@
+{
+  "dimension_id": "adaptation_correction",
+  "observed_level": 8,
+  "confidence": "high",
+  "evidence": [
+    {
+      "steps": "8-14",
+      "note": "TF32 broke correctness (>1.0 error, 86% values over tolerance). Rather than blindly tweaking, tested a split-fp32 (1mm/2mm/3mm) precision ladder, then root-caused the true failure: global TF32 was corrupting the LayerNorm; with per-op control a single TF32 matmul after LN gives ~3e-4 error. Correct diagnosis, not a nudge."
+    },
+    {
+      "steps": "19,48,57,83,119",
+      "note": "Repeatedly recognized falsified performance approaches and reverted instead of pushing harder: custom Triton contraction slower than cuBLAS (reverted to torch.matmul); fused LN+proj kernels OOM'd or were slower than cuBLAS (reverted to kernel_v1/v2 backups); fused postproc saved nothing so reverted 'for stability.' Kept backups to avoid regressing prior wins."
+    },
+    {
+      "steps": "23,74",
+      "note": "Root-caused two distinct correctness regressions: N=2048 failing 35% traced to int32 overflow (added int64 casts), and a Cauchy max-diff of 3.95 traced to an unsafe id()-keyed weight cache. Distinguished these correctness bugs from the separate latency problem."
+    },
+    {
+      "steps": "58,96-106",
+      "note": "Distinguished correctness vs performance work and used profiling to target the true bottleneck shape (N=2048 worst-case median drives the gate). Evidence-driven wins: Triton LN replaced torch LN (7ms\u21922.5ms), fp16 throughout (25ms\u219216.6ms), each re-verified for correctness before keeping."
+    },
+    {
+      "steps": "122-144",
+      "note": "Recognized the gate (16.7ms vs 10.4ms) wasn't met but correctness held across shapes; attempted a full correctness sweep but the terminal froze, and it could not recover, ending on an unverified final check."
+    }
+  ],
+  "reasoning": "The agent consistently distinguished correctness failures (TF32 precision, int overflow, cache bug, Cauchy tolerance) from performance failures (bottleneck shape, tiling/OOM) and root-caused each with precision ladders and per-op profiling rather than blind tweaks (steps 8-14, 23, 74). It repeatedly abandoned falsified designs and reverted to backups instead of over-fitting a failing approach, re-verifying correctness after each change without regressing prior wins (steps 19,48,57,83,119). This matches the level-8 anchor strongly; it falls short of 10 because the latency gate was never cleared so the 'knows when to stop optimizing a passing shape' behavior couldn't be shown, and the run ended on a frozen, unverified terminal.",
+  "cost_usd": 0.14816235,
+  "turns_used": 6,
+  "error": null
+}

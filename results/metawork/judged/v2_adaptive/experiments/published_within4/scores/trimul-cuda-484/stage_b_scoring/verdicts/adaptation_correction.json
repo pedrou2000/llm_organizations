@@ -1,0 +1,31 @@
+{
+  "dimension_id": "adaptation_correction",
+  "observed_level": 8,
+  "confidence": "high",
+  "evidence": [
+    {
+      "steps": "13, 40, 50, 58, 96",
+      "note": "Sustained numeric-stability root-causing: repeatedly hit >2e-2 tolerance failures with bf16 projections/weights, diagnosed the cause as bf16's 7-bit mantissa, tested where it broke (Cauchy + no-mask cases), and finally reasoned that fp16 (10 mantissa bits) would satisfy tolerance \u2014 adopting fp16 W5 as an evidence-driven fix rather than nudging tolerances."
+    },
+    {
+      "steps": "18-21",
+      "note": "Correctness/wrong-intermediate diagnosis: traced slow bmm to a non-contiguous einsum output (step 18), forced contiguity, then found and fixed a reshape/permute bug that only appeared when D!=128 and B>1 (steps 20-21). Isolated true cause each time."
+    },
+    {
+      "steps": "78-93",
+      "note": "Performance root-causing on tiling: fused Triton LN+proj attempts repeatedly OOM'd; agent computed shared-memory budgets (5\u00d764KB weights >232KB), diagnosed num_stages pipelining doubling weight buffers, and a catastrophic 432ms regression traced to D-chunking reading x three times. Deliberate, quantified diagnosis, though several attempts ultimately abandoned."
+    },
+    {
+      "steps": "68-74, 106-107, 137-138, 144-148",
+      "note": "Distinguished perf from correctness and re-verified without regressing: tried compile modes (default/reduce-overhead/max-autotune), measured each, and reverted whenever a mode regressed a passing shape (e.g. reduce-overhead pushing D=384 from 8.8\u219210.9ms). Mildly circular \u2014 retried reduce-overhead and max-autotune more than once despite prior null/timeout results, edging toward blind retry."
+    },
+    {
+      "steps": "129, 136-142",
+      "note": "Knew when to stop: computed a roofline (5ms bmm near cuBLAS fp16 limit, 5.9ms compiled pre-bmm) showing the 2048 case couldn't clear the gate, stopped touching the 9 passing shapes, and reverted changes that didn't help rather than tweaking in circles."
+    }
+  ],
+  "reasoning": "The agent clearly separated correctness failures from performance failures and root-caused each: the Cauchy/tolerance misses were traced to bf16 mantissa precision and fixed by switching to fp16 (steps 13-96), wrong-intermediate bugs (contiguity, reshape) were isolated and fixed (steps 18-21), and slow shapes were diagnosed via memory/roofline analysis and targeted tiling/compile changes, with regressions reverted (steps 68-142). This matches anchor 8 strongly and touches 10 (multiple distinct failures, revisiting earlier design decisions, stopping on shapes that already pass). It falls short of a clean 10 because the late-stage retries of reduce-overhead and max-autotune repeated approaches already shown not to help, a whiff of anchor-3 behavior.",
+  "cost_usd": 0.2197884,
+  "turns_used": 13,
+  "error": null
+}

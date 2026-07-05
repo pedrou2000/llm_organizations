@@ -1,0 +1,371 @@
+{
+  "overall_gap": -0.35714285714285715,
+  "overall_observed": 7.928571428571429,
+  "task_specific_gap": -1.0,
+  "spine_gaps": {
+    "orientation_research": 1,
+    "decomposition_milestones": -1,
+    "verification_strategy": -1,
+    "progress_monitoring": 1,
+    "adaptation_correction": -1
+  },
+  "dimensions": [
+    {
+      "id": "orientation_research",
+      "name": "Understanding the LSP contract & golden output format",
+      "spine": true,
+      "importance": 10,
+      "weight": 0.17857142857142858,
+      "target_level": 9,
+      "observed_level": 10,
+      "gap": 1,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "3-6",
+          "note": "Read run_tests.sh, score_golden.py; discovered didOpen-with-empty-text forces disk reads, and reverse-engineered the URI mismatch (file:///workspace/test-files/ vs /workspace/java/) plus how normalize_uri strips to basename \u2014 pinning down a subtle contract detail before coding."
+        },
+        {
+          "steps": "5,29",
+          "note": "Ran a Counter over all 68186 golden entries to enumerate the exact method distribution with per-method pass opportunity (selectionRange 10%/10673, foldingRange, prepareCallHierarchy, references, documentSymbol, hover), deriving the method set empirically rather than guessing."
+        },
+        {
+          "steps": "12-16",
+          "note": "Extracted concrete per-method exemplars (Loggable.java hover, references, semanticTokens; documentSymbol flat SymbolInformation with containerName; kind codes 5/6/8; typeDefinition==definition range) building an explicit internal spec of each response shape."
+        },
+        {
+          "steps": "30-31,329-351",
+          "note": "When implementation mismatched, re-probed golden data to derive selectionRange chain invariants (skip class_body/block) and worked out 0-vs-1 indexing of folding ranges from multiple examples, cross-checking brace-line boundaries."
+        },
+        {
+          "steps": "462-485,1902,1936-1940",
+          "note": "Sustained inquiry deep into the build: reconciled contradictory codeLens exemplars, corrected annotation kind (5 vs 11 per JDT), and reverse-engineered JDT inheritance-aware references from ChainingIterator examples \u2014 continuously re-probing when mismatches revealed misunderstood contract details."
+        }
+      ],
+      "reasoning": "The agent treats golden.jsonl as an explicit reverse-engineering target from the outset and never stops: it reads run_tests/score_golden, statistically enumerates every method and its test volume, extracts concrete exemplars, and pins down subtle format facts (URI normalization, 0/1-indexing, range boundaries, kind codes, capability behaviors). Critically it re-probes the data every time a test mismatch exposes a misunderstood invariant (selectionRange chains, folding, annotation kinds, inheritance references), cross-checking against JDT conventions and distinguishing format from semantic requirements throughout the whole build. This matches the level-10 anchor of deriving per-method invariants from multiple examples and sustaining the inquiry across the entire attempt."
+    },
+    {
+      "id": "decomposition_milestones",
+      "name": "Layering the build (lexer \u2192 parser \u2192 AST \u2192 analysis \u2192 per-method handlers)",
+      "spine": true,
+      "importance": 9,
+      "weight": 0.16071428571428573,
+      "target_level": 9,
+      "observed_level": 8,
+      "gap": -1,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "17-19",
+          "note": "Ran a tree-sitter parsing spike to de-risk the parser choice, then explicitly decomposed into layers: main.rs (LSP loop/dispatcher), analyzer.rs (parsing + symbol tables), per-method handlers \u2014 a clear protocol\u2192parser\u2192symbol-model\u2192handlers hierarchy."
+        },
+        {
+          "steps": "22-28",
+          "note": "Created stub handlers first specifically to get the project compiling, then ran run_tests.sh for a 64% baseline \u2014 using 'compiles + handshake responds + files parse' as the done-check for the foundation before method work."
+        },
+        {
+          "steps": "29",
+          "note": "Explicit prioritized method sequence chosen by cost-to-pass: listed each method's pass rate and test count and picked selectionRange (10%, 10673 tests) as 'biggest opportunity' first."
+        },
+        {
+          "steps": "60, 72, 79, 185, 260",
+          "note": "Repeatedly revisited the plan as passing counts changed, re-enumerating remaining per-method opportunities and re-targeting the largest gaps \u2014 plan revision by where value concentrates."
+        },
+        {
+          "steps": "53, 76, 130, 262",
+          "note": "Extended a shared symbol-table/resolve layer (locals, anonymous classes, records, type params, inheritance) that multiple handlers reuse; later methods build on validated earlier machinery rather than reinventing per method."
+        }
+      ],
+      "reasoning": "The agent established an explicit layered milestone hierarchy (protocol plumbing \u2192 tree-sitter parsing \u2192 symbol table \u2192 handlers), got the foundation minimally working with a concrete baseline (64%) before method work, then tackled methods one at a time in a sequence prioritized by cost-to-pass, each gated by a concrete per-method pass-rate check, with later methods building on shared validated machinery \u2014 a textbook match for anchor 8. It exhibits some anchor-10 traits (an early parsing spike, continuous re-prioritization as pass counts revealed remaining value), but sequencing was driven mainly by opportunity size rather than explicit risk-first ordering or deliberate up-front batching of methods by shared machinery, keeping it at 8 rather than higher."
+    },
+    {
+      "id": "verification_strategy",
+      "name": "Driving development with the golden test loop and finer checks",
+      "spine": true,
+      "importance": 9,
+      "weight": 0.16071428571428573,
+      "target_level": 9,
+      "observed_level": 8,
+      "gap": -1,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "28-29",
+          "note": "After first build the agent wrote /tmp/check.py which runs the actual compiled server against golden.jsonl and produces a PER-METHOD pass-rate breakdown (selectionRange 10%, folding 36%, references 63%, etc.), turning the opaque aggregate into localized diagnostics. run_tests.sh is used as the outer loop (~30 runs across steps 28-263)."
+        },
+        {
+          "steps": "84-88",
+          "note": "Built /tmp/diff.py, a per-triple expected-vs-actual diff tool invoked with method+file filters (e.g. textDocument/hover on a specific file), letting it pinpoint the exact divergent field \u2014 e.g. discovering a missing '...' varargs token from field-level output."
+        },
+        {
+          "steps": "30-36, 61-66",
+          "note": "Diffing drives field/position-level fixes: identifies selectionRange chain has extra class_body node, folding endLine off-by-one, reference range including receiver (col 38 vs 43), documentSymbol kind 8 vs 14 (Constant). Feeds specific single files/methods through the real binary to isolate the divergent field."
+        },
+        {
+          "steps": "974, 1531, 1708-1713",
+          "note": "Regression awareness: notices codeLens dropped 99.4->96.3, documentHighlight regressed 95.6->95.0, and reverts an overload-disambiguation change that caused a slight regression \u2014 reactive regression guarding via the per-method breakdown, though not an engineered guard harness."
+        }
+      ],
+      "reasoning": "The agent engineered a tight verification workflow well beyond a pass/fail number: reusable scripts giving per-method pass rates and per-triple expected-vs-actual field-level diffs, run against the real compiled server on isolated single files/methods to pinpoint exact divergent fields and positions \u2014 squarely the anchor-8 description. It shows some level-10 traits (reactively catching and reverting regressions from the breakdown, sustained across the whole suite from step 29 to 264) but lacks a formally engineered regression-guard harness, so it stops short of 10."
+    },
+    {
+      "id": "progress_monitoring",
+      "name": "Tracking pass-rate across many methods without losing the plot",
+      "spine": true,
+      "importance": 8,
+      "weight": 0.14285714285714285,
+      "target_level": 8,
+      "observed_level": 9,
+      "gap": 1,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "28-29",
+          "note": "After first run_tests, records 64% aggregate AND a full per-method breakdown ranked by opportunity (selectionRange 10%/10673 tests, foldingRange 36%, references 63%, etc.), explicitly choosing the biggest-impact target first."
+        },
+        {
+          "steps": "57",
+          "note": "Promptly detects a regression: 'documentSymbol crashed from 69% to 9%' after adding locals/params, diagnoses the cause, and fixes it \u2014 while also noting codeLens 55->99.4% and references 63->71 in the same breath."
+        },
+        {
+          "steps": "60,639,694,1465,1928",
+          "note": "At every checkpoint reports the new aggregate (80%, 85.5%, 90%, 96.37%, 97.48%) plus a live per-method ledger with pass% and absolute remaining-failure counts (e.g. 'references 90.5% (861 failures)'), re-prioritizing by expected gain each time."
+        },
+        {
+          "steps": "225-228",
+          "note": "Catches a regression from overload-disambiguation ('Slight regression... my added complexity may have hurt'), reverts, then tries a more conservative different approach \u2014 recognizing repeated edits weren't moving the needle."
+        },
+        {
+          "steps": "1083,1271,264",
+          "note": "Repeatedly labels changes 'Marginal improvement'/'Marginal change' and pivots to other methods rather than grinding, showing awareness when effort isn't paying off \u2014 though the very-late references/ChainingIterator work shows some continued circling without an explicit step-back."
+        }
+      ],
+      "reasoning": "The agent maintains a disciplined, live per-method/per-file ledger of pass rate throughout the entire ~264-step arc, consistently pairing the aggregate score with absolute remaining-failure counts and re-prioritizing remaining work by expected gain (steps 28-29, 639, 1465, 1928) \u2014 matching the top anchors. It detects regressions promptly (docSymbol 69->9% at step 57; the overload revert at 225-228) and repeatedly recognizes marginal/non-productive edits and redirects effort. It falls just short of a perfect 10 because in the final references stretch it lets some circular ChainingIterator debugging continue without an explicit step-back, so I place it at 9."
+    },
+    {
+      "id": "adaptation_correction",
+      "name": "Rearchitecting when the parser/analysis approach stalls",
+      "spine": true,
+      "importance": 8,
+      "weight": 0.14285714285714285,
+      "target_level": 8,
+      "observed_level": 7,
+      "gap": -1,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "7-19",
+          "note": "Made the correct foundational build-vs-reuse bet upfront (tree-sitter-java rather than hand-rolled parser), tested it in isolation before committing. This kept the foundation adequate, so no forced whole-scale pivot ever arose."
+        },
+        {
+          "steps": "52-54",
+          "note": "Foundational rework of the symbol model: recognizes resolve_at's return type is inadequate for locals/params, deliberately re-architects SymbolTable to be scope-aware and updates dependent handlers \u2014 anchor-8-style reworking of the resolution model rather than layering hacks."
+        },
+        {
+          "steps": "57",
+          "note": "Detects documentSymbol regression (69%\u21929%) caused by the symbol-model change, diagnoses root cause, and fixes while preserving code-lens/references gains \u2014 preserving already-passing behavior."
+        },
+        {
+          "steps": "160",
+          "note": "Identifies find_type_or_param's 'return first match' as a foundational lookup flaw for nested generics and reworks it into scope-aware lookup."
+        },
+        {
+          "steps": "222-228",
+          "note": "Tries type-aware overload disambiguation, observes regression, reverts (226), then retries a more conservative variant \u2014 abandoning a failing tactic rather than repeating the same edit."
+        },
+        {
+          "steps": "793,997,1451",
+          "note": "Repeatedly recognizes hard-to-reproduce categories (JDK javadoc, inheritance-aware references) and reallocates effort rather than grinding on unwinnable cases."
+        }
+      ],
+      "reasoning": "The agent clearly exceeds anchor 5: when pieces stall it tries materially different tactics (overload resolution try/revert/retry) rather than repeating edits. It reaches into anchor 8 with genuine foundational reworks of the resolution/symbol model (steps 52-54, 160) that it recognizes as root causes and propagates to dependent handlers, plus disciplined regression recovery (step 57). It falls short of 10 because the correct upfront tree-sitter bet meant the foundation was never falsified, so there is no repeated weighing of alternative architectures or build-vs-reuse pivots across the build, and the majority of the arc is incremental per-handler patching. That places it between 5 and 8, at 7."
+    },
+    {
+      "id": "tooling_leverage_strategy",
+      "name": "Build-vs-reuse and effort allocation across a huge surface",
+      "spine": false,
+      "importance": 6,
+      "weight": 0.10714285714285714,
+      "target_level": 7,
+      "observed_level": 7,
+      "gap": 0,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "8-9",
+          "note": "Conscious build/reuse decision: pull tree-sitter-java for the huge Java grammar surface plus serde/serde_json for JSON, with stated rationale ('tree-sitter-java would be ideal for parsing Java'). Reuses ecosystem for parsing while planning to hand-build analysis."
+        },
+        {
+          "steps": "17-19",
+          "note": "Validated tree-sitter parsing and its AST format in a scratch project before committing the full build to it \u2014 checking the dependency fits before standing on it."
+        },
+        {
+          "steps": "19-24",
+          "note": "Deliberately concentrated hand-built effort on the analysis layer (analyzer.rs, per-method handlers, symbol model) rather than parsing \u2014 the part that earns test passes and keeps it a genuine AST-analyzing server."
+        },
+        {
+          "steps": "927-942, 1296",
+          "note": "Worked around tree-sitter quirks (object_creation_expression lacks a 'body' field; annotation type bodies) by adapting analysis code rather than abandoning the crate \u2014 tactical adaptation, but not a strategic re-evaluation of the leverage choice."
+        },
+        {
+          "steps": "260-264",
+          "note": "Late-game effort still directed at hand-built analysis (inheritance-aware references) on top of tree-sitter parsing, reaching ~97.5% \u2014 consistent leverage split sustained across the horizon."
+        }
+      ],
+      "reasoning": "The agent consciously split the surface \u2014 reuse tree-sitter-java and serde for parsing/JSON plumbing, hand-build the AST analysis where test passes are earned \u2014 and validated the parser fit before committing (above anchor 5, and matching much of anchor 8's deliberate effort allocation). However, the rationale was implicit ('ideal') rather than an explicit trade-off, and it only adapted tactically to tree-sitter's limits rather than re-evaluating the leverage choice when a dependency proved limiting, so it falls short of the full 8/10 self-correcting-pivot behavior. This lands at 7."
+    },
+    {
+      "id": "generalization_integrity",
+      "name": "Keeping the solution a real LSP, not a golden lookup",
+      "spine": false,
+      "importance": 6,
+      "weight": 0.10714285714285714,
+      "target_level": 7,
+      "observed_level": 5,
+      "gap": -2,
+      "confidence": "high",
+      "evidence": [
+        {
+          "steps": "7-19",
+          "note": "Chooses tree-sitter-java to parse the AST and validates parsing works before implementing; commits from the outset to a real analysis-based server rather than any lookup of golden.jsonl."
+        },
+        {
+          "steps": "30-43",
+          "note": "For selectionRange/folding it derives general AST rules (skip class_body/blocks, brace-line conventions) from examples and implements them generally; cross-checks a rule against multiple files (SwitchAssign, TypeMismatchSwitch) \u2014 general inference, but rules are reverse-engineered from golden cases."
+        },
+        {
+          "steps": "139-141",
+          "note": "Worries a folding-start-line change 'might break some' passing cases \u2014 awareness that rules must hold broadly, though framed against the golden set rather than untested inputs."
+        },
+        {
+          "steps": "222-228",
+          "note": "Adds general argument-type overload disambiguation, sees a regression, reverts the fragile complexity \u2014 judging by aggregate golden score, still keeping the logic general rather than special-casing individual files."
+        },
+        {
+          "steps": "231-253",
+          "note": "Deep AST debugging (interfaces field, extract_type_names bug) to make implementation() work via genuine class-hierarchy analysis \u2014 real LSP internals, no memorized answers, but the fixes are heuristics tuned to reproduce JDT with no validation beyond the goldens."
+        }
+      ],
+      "reasoning": "The agent maintains a genuinely general, AST-based LSP throughout and never retrieves or hardcodes golden.jsonl responses, matching anchor 5's 'commits to a genuinely general AST-based approach and avoids retrieval.' It does not reach 8/10: it performs no explicit self-verification of generality on inputs outside the golden set and never frames memorization as a red flag \u2014 its rules are reverse-engineered from golden examples and applied generally, but validated only against the golden test set. It stays above 3 because fixes are implemented as general code paths, not per-example special-casing to force individual cases."
+    }
+  ],
+  "rubric": {
+    "task_read": "Build a real Java LSP server in Rust from scratch: a lexer/parser producing a Java AST, semantic analysis, and JSON-RPC-over-stdio handling for multiple LSP methods, scored against golden.jsonl triples derived from JDT-LS with an explicit 'no retrieval / all tests must pass' bar. This is an extremely long-horizon, high-complexity task with a huge implementation surface (Java grammar, symbol resolution, per-method response shapes that must byte-match another server's output). It rewards heavy, sustained meta-work: deep orientation into the LSP contract and the exact golden format, aggressive decomposition per method, a tight run_tests verification loop, continuous progress accounting across many partially-passing methods, and willingness to rearchitect (e.g. parser strategy, build-vs-reuse) when an approach stalls.",
+    "dimensions": [
+      {
+        "id": "orientation_research",
+        "name": "Understanding the LSP contract & golden output format",
+        "description": "Reading run_tests.*, inspecting golden.jsonl structure, and reverse-engineering the exact JDT-LS response shape per LSP method before/while committing to an implementation.",
+        "why_it_matters": "The contract is under-specified prose; the real spec lives implicitly in golden.jsonl and the JDT-LS behaviors it encodes. Every method's expected response format (ranges, URIs, 0- vs 1-indexing, capability negotiation) must be inferred correctly or all downstream work misses. Acting blind here guarantees wasted implementation.",
+        "importance": 10,
+        "target_level": 9,
+        "anchors": {
+          "0": "Starts coding a parser/server with no inspection of golden.jsonl, run_tests, or the LSP methods actually exercised.",
+          "3": "Skims the task text, maybe opens golden.jsonl once; guesses response shapes and the set of methods rather than deriving them.",
+          "5": "Reads run_tests and golden.jsonl, enumerates which methods and files are tested, and infers the basic response schema for the common methods before building.",
+          "8": "Systematically dissects golden.jsonl: catalogs every ($method) present, extracts concrete expected-response exemplars, and pins down subtle format details (position indexing, URI scheme, range boundaries, initialize/capabilities handshake) \u2014 building an explicit internal spec of the contract.",
+          "10": "Treats the golden set as a reverse-engineering target: derives per-method invariants from multiple examples, cross-checks ambiguous cases against JDT-LS conventions, distinguishes format requirements from semantic requirements, and re-probes the data whenever a mismatch reveals a misunderstood contract detail \u2014 sustaining this inquiry across the whole build."
+        },
+        "spine": true
+      },
+      {
+        "id": "decomposition_milestones",
+        "name": "Layering the build (lexer \u2192 parser \u2192 AST \u2192 analysis \u2192 per-method handlers)",
+        "description": "Breaking an enormous surface into an ordered hierarchy \u2014 protocol plumbing, parsing, symbol model, then method-by-method handlers \u2014 each with a concrete done-check.",
+        "why_it_matters": "With Java's grammar, semantic analysis, and many LSP methods, an undifferentiated push collapses. Sequencing (get stdio+initialize handshake working first, then a parseable AST, then the cheapest-to-pass methods) is what lets progress accumulate over a long horizon instead of stalling everywhere at once.",
+        "importance": 9,
+        "target_level": 9,
+        "anchors": {
+          "0": "One monolithic attempt; no sub-goals, no ordering \u2014 tries to make everything work at once.",
+          "3": "Vague mental split (\u2018parser then handlers\u2019) with no explicit milestones or completion criteria per stage.",
+          "5": "Identifies the main layers and a sensible order, tackles methods one at a time, and knows when a layer minimally works (e.g. handshake responds, files parse).",
+          "8": "Explicit milestone hierarchy: protocol layer, parser, symbol table, then a prioritized method sequence chosen by dependency and cost-to-pass; each milestone has a concrete check (e.g. \u2018hover passes on file X\u2019) and later methods build on validated earlier ones.",
+          "10": "Milestones are sequenced by leverage and risk \u2014 foundational/shared capabilities first, riskiest grammar or resolution work de-risked early with spikes, method groups batched by shared machinery \u2014 and the plan is revisited as passing counts reveal where remaining value concentrates."
+        },
+        "spine": true
+      },
+      {
+        "id": "verification_strategy",
+        "name": "Driving development with the golden test loop and finer checks",
+        "description": "Deliberately using run_tests as the outer loop plus building tighter per-method / per-file diagnostics to localize failures beyond the aggregate score.",
+        "why_it_matters": "Success is defined by matching JDT-LS output exactly, so the agent must design how it learns of correctness: not just running run_tests, but diffing expected-vs-actual responses to see WHICH field/position is wrong. Without finer checks, a many-method server gives a single opaque pass rate and debugging becomes guesswork.",
+        "importance": 9,
+        "target_level": 9,
+        "anchors": {
+          "0": "Never runs run_tests, or runs it once and assumes correctness from code inspection.",
+          "3": "Runs run_tests occasionally as a pass/fail number with no per-case diffing; can't say which method or field fails.",
+          "5": "Uses run_tests as a regular feedback loop and inspects failing cases to understand at least which methods are failing.",
+          "8": "Builds a tight verification workflow: diffs expected vs actual per triple, isolates single methods/files, and adds targeted checks (e.g. feeding one request manually over stdio) to pinpoint the exact divergent field or position.",
+          "10": "Engineers verification as infrastructure: structured expected-vs-actual diffing, regression guarding so fixed methods stay fixed, minimal reproduction of individual failing requests, and validation that passes reflect genuine analysis rather than coincidental format matches \u2014 sustained across the whole test suite."
+        },
+        "spine": true
+      },
+      {
+        "id": "progress_monitoring",
+        "name": "Tracking pass-rate across many methods without losing the plot",
+        "description": "Maintaining an accurate done-vs-remaining picture (which methods/files pass, which regressed) and detecting when stuck circling one failure.",
+        "why_it_matters": "With many methods and a large codebase, it's easy to churn on one stubborn case while regressing others, or to lose track of overall standing. Accurate accounting across the long horizon decides whether the agent converges toward all-tests-pass or thrashes.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "No sense of overall standing; doesn't know how many/which cases pass at any point.",
+          "3": "Vague awareness of the aggregate number; no per-method breakdown; doesn't notice regressions.",
+          "5": "Tracks which methods pass vs fail and notices when the count moves the wrong way after a change.",
+          "8": "Keeps a live, per-method/per-file ledger of pass state, detects regressions promptly, and recognizes when repeated edits to one failure aren't moving the needle \u2014 then redirects effort.",
+          "10": "Maintains a disciplined progress model across the whole horizon: prioritizes remaining work by expected gain, catches thrash/circular-debugging early and explicitly steps back, and never loses sight of the global \u2018all tests pass\u2019 target while working local failures."
+        },
+        "spine": true
+      },
+      {
+        "id": "adaptation_correction",
+        "name": "Rearchitecting when the parser/analysis approach stalls",
+        "description": "Revising design decisions (parsing strategy, symbol model, build-vs-reuse) when evidence shows the current approach can't reach correctness, instead of grinding on it.",
+        "why_it_matters": "A hand-rolled recursive-descent Java parser or a naive symbol model may prove inadequate for the grammar or resolution the golden cases demand. The horizon is long enough that a wrong foundational bet is fatal unless the agent recognizes falsification and changes course.",
+        "importance": 8,
+        "target_level": 8,
+        "anchors": {
+          "0": "Sticks rigidly to the first approach even as failures pile up; repeats the same fix attempts.",
+          "3": "Makes only local patches to a failing design; never questions the foundational approach.",
+          "5": "When an approach clearly isn't working, tries a materially different tactic for that piece rather than repeating the same edit.",
+          "8": "Recognizes when a foundational choice (parser structure, resolution model, response serialization) is the root cause, and deliberately reworks it \u2014 updating dependent milestones \u2014 rather than layering hacks.",
+          "10": "Treats divergence as signal: diagnoses the true root cause from failing evidence, weighs alternative architectures (including build-vs-reuse pivots), executes a clean rework while preserving already-passing behavior, and documents why the pivot beats persistence \u2014 repeatedly and decisively across the build."
+        },
+        "spine": true
+      },
+      {
+        "id": "tooling_leverage_strategy",
+        "name": "Build-vs-reuse and effort allocation across a huge surface",
+        "description": "Strategic decisions about what to implement by hand vs leverage from the ecosystem (e.g. a Java grammar/parser crate, an LSP/JSON-RPC framework) given finite effort against an enormous scope.",
+        "why_it_matters": "Reimplementing the full Java grammar and LSP plumbing from scratch may be infeasible in-horizon; a skilled agent explicitly decides where to spend effort and where to stand on existing crates, while the task still demands genuine AST-based analysis. This allocation choice is high-leverage and distinct from mere sequencing.",
+        "importance": 6,
+        "target_level": 7,
+        "anchors": {
+          "0": "No consideration of scope vs effort; blindly hand-builds everything (or reaches for nothing) with no rationale.",
+          "3": "Makes an implicit build/reuse choice without weighing the trade-off or the task's \u2018analyze the AST\u2019 requirement.",
+          "5": "Consciously decides which parts to hand-build vs pull from crates, with a basic rationale that respects the \u2018real LSP\u2019 constraint.",
+          "8": "Deliberately allocates effort: leverages robust ecosystem pieces for plumbing/parsing where sound, concentrates hand-built effort on the analysis that earns test passes, and revisits the choice when a dependency proves limiting.",
+          "10": "Makes and re-evaluates a coherent leverage strategy that maximizes coverage per unit effort while keeping the solution a genuine AST-analyzing server \u2014 choosing tools by fit to the golden contract and pivoting deliberately when a chosen tool blocks progress."
+        },
+        "spine": false
+      },
+      {
+        "id": "generalization_integrity",
+        "name": "Keeping the solution a real LSP, not a golden lookup",
+        "description": "Maintaining and self-checking that the server answers by analyzing the AST generally, rather than memorizing/retrieving golden.jsonl answers \u2014 the explicitly forbidden shortcut.",
+        "why_it_matters": "The spec explicitly bars using golden.jsonl as a retrieval layer and demands a real LSP. Passing tests via memorization is illusory progress; a skilled agent guards against this both as a design commitment and by sanity-checking that passes come from genuine analysis.",
+        "importance": 6,
+        "target_level": 7,
+        "anchors": {
+          "0": "Hardcodes or looks up golden.jsonl responses; \u2018passing\u2019 is pure memorization.",
+          "3": "Mostly general but slips in case-specific shortcuts/special-casing to force particular golden cases to pass.",
+          "5": "Commits to a genuinely general AST-based approach and avoids retrieval, though without much explicit self-verification of generality.",
+          "8": "Actively keeps the solution general and checks that passes stem from real analysis (e.g. reasoning about untested inputs, avoiding per-example special-casing), treating any memorization temptation as a red flag.",
+          "10": "Holds a clear principle that the server must generalize, deliberately validates that its analysis would hold on inputs outside the golden set, and refactors away any accidental overfitting \u2014 ensuring measured progress reflects a real language server."
+        },
+        "spine": false
+      }
+    ]
+  },
+  "cost_usd": 2.4029853,
+  "errors": []
+}
