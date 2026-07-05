@@ -19,7 +19,14 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-DEFAULT_SCORES_DIR = Path("results/metawork/judged/v2_adaptive/scores")
+_V2 = Path("results/metawork/judged/v2_adaptive")
+# Harbor-run score trees can live in the canonical scores/ dir (future live runs)
+# OR archived under an experiment (e.g. experiments/stress_test/scores/). We
+# search all of these by <job>/<trial_id> so the viz finds a judgement wherever
+# it was written. First hit wins.
+DEFAULT_SCORES_DIR = _V2 / "scores"
+_SEARCH_ROOTS = [_V2 / "scores"] + sorted((_V2 / "experiments").glob("*/scores")) \
+    if (_V2 / "experiments").exists() else [_V2 / "scores"]
 
 # Pull explicit step-ids out of an evidence `steps` string: bare ints and int
 # ranges ("13-16" -> 13,14,15,16). Anything else ("all", "patch lines 611-628")
@@ -113,8 +120,20 @@ class Judgement:
 
 
 def _score_path(key: str, scores_dir: Path | str) -> Path:
+    """Resolve a trial's score.json by "job/trial_id".
+
+    If `scores_dir` is the default, search every known root (canonical scores/
+    + each experiments/*/scores) and return the first that exists. An explicit
+    non-default `scores_dir` is used verbatim (tests / custom locations).
+    """
     job, _, trial_id = key.partition("/")
-    return Path(scores_dir) / job / trial_id / "score.json"
+    rel = Path(job) / trial_id / "score.json"
+    roots = _SEARCH_ROOTS if Path(scores_dir) == DEFAULT_SCORES_DIR else [Path(scores_dir)]
+    for root in roots:
+        cand = root / rel
+        if cand.is_file():
+            return cand
+    return Path(scores_dir) / rel   # canonical (nonexistent) — caller checks is_file()
 
 
 def load_judgement(key: str, max_step: int,

@@ -18,10 +18,10 @@ CAVEAT (printed on cross-model figures): the published flat_text is far lossier
 for some models than others, so cross-model plots (1, 3) partly reflect harvest
 fidelity, not just meta-work. Within-model plots (4, 6) are unaffected.
 
-Output: results/metawork/judged/v2_adaptive/plots/*.png
+Output: results/metawork/judged/v2_adaptive/experiments/published_grid/plots/*.png
 
 Usage:
-    python scripts/metawork/judge/v2_adaptive/plot_published.py --tag grid
+    python scripts/metawork/judge/v2_adaptive/experiments/published_grid/plot_published.py --tag grid
 """
 from __future__ import annotations
 
@@ -40,9 +40,13 @@ SPINE = ["orientation_research", "decomposition_milestones", "verification_strat
 _CAVEAT = "cross-model: published flat_text fidelity varies by model — treat with care"
 
 
+def _exp_dir(results_dir: Path, tag: str) -> Path:
+    return (results_dir / "metawork" / "judged" / "v2_adaptive"
+            / "experiments" / f"published_{tag}")
+
+
 def _load(results_dir: Path, tag: str, score_model: str) -> pd.DataFrame:
-    p = (results_dir / "metawork" / "judged" / "v2_adaptive"
-         / f"scored_published_{tag}__{score_model}.parquet")
+    p = _exp_dir(results_dir, tag) / f"scored_published_{tag}__{score_model}.parquet"
     df = pd.read_parquet(p)
     df["partial"] = pd.to_numeric(df["partial"], errors="coerce")
     df = df.dropna(subset=[GAP, "partial"]).copy()
@@ -190,7 +194,7 @@ def main():
     ap.add_argument("--results-dir", default="results")
     args = ap.parse_args()
     results_dir = Path(args.results_dir)
-    plots_dir = results_dir / "metawork" / "judged" / "v2_adaptive" / "plots"
+    plots_dir = _exp_dir(results_dir, args.tag) / "plots"
 
     df = _load(results_dir, args.tag, args.score_model)
     print(f"loaded {len(df)} v2-judged trajectories "

@@ -14,10 +14,10 @@ trajectory fixed and asks how much the judge's score wobbles, split into:
                        the mechanism behind the gap variance.
   3. acceptance      — total_sd per metric vs the 0.5 acceptance bar.
 
-Output: results/metawork/judged/v2_adaptive/plots/variance_*.png
+Output: results/metawork/judged/v2_adaptive/experiments/variance/plots/*.png
 
 Usage:
-    python scripts/metawork/judge/v2_adaptive/plot_variance.py --rubrics 10 --scorings 10
+    python scripts/metawork/judge/v2_adaptive/experiments/variance/plot_variance.py --rubrics 10 --scorings 10
 """
 from __future__ import annotations
 
@@ -30,7 +30,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-_DIR = Path("results/metawork/judged/v2_adaptive")
+_EXP = Path("results/metawork/judged/v2_adaptive/experiments/variance")
+_DATA = _EXP / "data"
+_PLOTS = _EXP / "plots"
 SPINE = ["orientation_research", "decomposition_milestones", "verification_strategy",
          "progress_monitoring", "adaptation_correction"]
 ACCEPT_SD = 0.5
@@ -39,8 +41,8 @@ C_RUBRIC = "#f2a541"    # rubric (ruler) noise
 
 
 def _save(fig, name: str):
-    (_DIR / "plots").mkdir(parents=True, exist_ok=True)
-    fig.savefig(_DIR / "plots" / f"{name}.png", dpi=150, bbox_inches="tight")
+    _PLOTS.mkdir(parents=True, exist_ok=True)
+    fig.savefig(_PLOTS / f"{name}.png", dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  saved {name}.png")
 
@@ -66,7 +68,7 @@ def plot_decomposition(dec: pd.DataFrame):
     fig.suptitle("Variance decomposition per dimension: the RULER (rubric) wobbles "
                  "more than the READER (scoring)", fontsize=12)
     fig.tight_layout()
-    _save(fig, "variance_1_decomposition")
+    _save(fig, "1_decomposition")
 
 
 def plot_target_vs_obs(dec: pd.DataFrame):
@@ -92,7 +94,7 @@ def plot_target_vs_obs(dec: pd.DataFrame):
                  "but real rubric-noise (fresh synthesis moves the bar)", fontsize=11)
     ax.legend(fontsize=8)
     fig.tight_layout()
-    _save(fig, "variance_2_target_vs_observed")
+    _save(fig, "2_target_vs_observed")
 
 
 def plot_acceptance(dec: pd.DataFrame):
@@ -115,7 +117,7 @@ def plot_acceptance(dec: pd.DataFrame):
                  fontsize=11)
     ax.legend(fontsize=8)
     fig.tight_layout()
-    _save(fig, "variance_3_acceptance")
+    _save(fig, "3_acceptance")
 
 
 def main():
@@ -124,7 +126,7 @@ def main():
     ap.add_argument("--rubrics", type=int, default=10)
     ap.add_argument("--scorings", type=int, default=10)
     args = ap.parse_args()
-    p = _DIR / "variance" / f"variance_decomposition__M{args.rubrics}_K{args.scorings}.parquet"
+    p = _DATA / f"variance_decomposition__M{args.rubrics}_K{args.scorings}.parquet"
     dec = pd.read_parquet(p)
     print(f"loaded decomposition ({len(dec)} rows, "
           f"{dec['trajectory'].nunique()} trajectories) from {p.name}")

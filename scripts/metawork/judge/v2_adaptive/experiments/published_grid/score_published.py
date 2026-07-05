@@ -11,10 +11,10 @@ partly reflect harvest fidelity; within-model / within-task views are clean.
 
 Usage:
     # cheap validation over a few cells
-    python scripts/metawork/judge/v2_adaptive/score_published.py --limit 3
+    python scripts/metawork/judge/v2_adaptive/experiments/published_grid/score_published.py --limit 3
 
     # the full balanced grid (9 models x 20 tasks x 1 = 180 trajectories)
-    python scripts/metawork/judge/v2_adaptive/score_published.py --tag grid
+    python scripts/metawork/judge/v2_adaptive/experiments/published_grid/score_published.py --tag grid
 """
 from __future__ import annotations
 
@@ -57,6 +57,7 @@ async def main():
 
     suffix = f"_limit{args.limit}" if args.limit is not None else ""
     out_path = (Path(args.results_dir) / "metawork" / "judged" / "v2_adaptive"
+                / "experiments" / f"published_{args.tag}"
                 / f"scored_published_{args.tag}__{score_model}{suffix}.parquet")
     if out_path.exists() and not args.force:
         print(f"skipping: {out_path} already exists (use --force to re-score)")

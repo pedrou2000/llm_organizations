@@ -21,8 +21,8 @@ Two deliberate choices for the published corpus:
      rubric is synthesized once from the task spec (blind to any trajectory).
 
 Output:
-  results/metawork/judged/v2_adaptive/scored_published_<tag>__<score_model>.parquet
-  + per-trajectory inspection trees under scores/published_<tag>/<id>/
+  results/metawork/judged/v2_adaptive/experiments/published_<tag>/scored_published_<tag>__<score_model>.parquet
+  + per-trajectory inspection trees under experiments/published_<tag>/scores/<id>/
 """
 from __future__ import annotations
 
@@ -111,8 +111,11 @@ async def score_published_corpus(
     ok = sum(1 for r in rubric_cache.values() if r is not None)
     print(f"    {ok}/{len(tasks)} rubrics synthesized")
 
-    scores_root = (results_dir / "metawork" / "judged" / "v2_adaptive"
-                   / "scores" / f"published_{tag}")
+    # Everything for this experiment lives under experiments/published_<tag>/:
+    # the summary parquet + per-trajectory score trees under scores/.
+    exp_dir = (results_dir / "metawork" / "judged" / "v2_adaptive"
+               / "experiments" / f"published_{tag}")
+    scores_root = exp_dir / "scores"
 
     async def score_one(row: pd.Series) -> dict:
         rubric = rubric_cache.get(row["task"])
@@ -152,8 +155,7 @@ async def score_published_corpus(
     out["corpus"] = f"published_{tag}"
 
     suffix = f"_limit{limit}" if limit is not None else ""
-    out_path = (results_dir / "metawork" / "judged" / "v2_adaptive"
-                / f"scored_published_{tag}__{score_model}{suffix}.parquet")
+    out_path = exp_dir / f"scored_published_{tag}__{score_model}{suffix}.parquet"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out.to_parquet(out_path)
 

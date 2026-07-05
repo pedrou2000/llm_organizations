@@ -21,13 +21,13 @@ the standard one-way random-effects decomposition on observed_level / target_lev
 
 Usage:
     # full run (M=10 rubrics x K=10 scorings x 2 trajectories = 200 scorings)
-    python scripts/metawork/judge/v2_adaptive/measure_variance.py
+    python scripts/metawork/judge/v2_adaptive/experiments/variance/measure_variance.py
 
     # cheap validation first
-    python scripts/metawork/judge/v2_adaptive/measure_variance.py --rubrics 2 --scorings 2
+    python scripts/metawork/judge/v2_adaptive/experiments/variance/measure_variance.py --rubrics 2 --scorings 2
 
     # recompute the decomposition from an existing raw parquet, no LLM calls
-    python scripts/metawork/judge/v2_adaptive/measure_variance.py --analyze-only
+    python scripts/metawork/judge/v2_adaptive/experiments/variance/measure_variance.py --analyze-only
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ from metawork.judges.v2_adaptive import judge_metawork, synthesize_rubric
 from metawork.judges.v2_adaptive.aggregate.types import Rubric
 
 _SPEC = Path("vendor/swe-marathon/tasks/excel-clone/instruction.md")
-_OUT = Path("results/metawork/judged/v2_adaptive/variance")
+_OUT = Path("results/metawork/judged/v2_adaptive/experiments/variance/data")
 
 # Two excel-clone trajectories spanning the observed-meta-work range (from the
 # par4 stress run): a "clean" high-metawork trial and a "messy" low one. Same
