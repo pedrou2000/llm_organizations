@@ -1,9 +1,11 @@
 # Meta-Work: the Missing Layer Between LLM Agents and LLM Organizations
 
-Today's LLM agents are remarkably capable at *doing* work, and systematically bad at the **work about the work**: deciding what to understand before acting, how to decompose, how to verify, when to change course. We call this **meta-work**, and we believe it, not raw intelligence, is the binding constraint on long-horizon AI performance. Humanity has already solved this problem once: **organizations** are our technology for doing meta-work at a scale no individual mind can hold. No single human can plan, decompose, verify, and coordinate "make humanity interplanetary". A company can. This repository is the empirical ground floor of a research program whose long-term aim is to build that same layer for LLMs: general, scalable **LLM organizations**.
+Today's LLM agents are remarkably capable at *doing* work, and systematically bad at the **work about the work**: deciding what to understand before acting, how to decompose, how to verify, when to change course. We call this **meta-work**, and we believe it, not raw intelligence, is the binding constraint on long-horizon AI performance. Humanity has already solved this problem once: **organizations** are our technology for doing meta-work at a scale no individual mind can hold. No single human can plan, decompose, verify, and coordinate "make humanity interplanetary". A company can. The long-term aim of this research program is to build that same layer for LLMs: general, scalable **LLM organizations**.
 
-> 📄 **The full vision (theses, argument, and the organization-theory blueprint):**
+> 📄 **Where this project is going. The vision, theses, and organization-theory blueprint:**
 > [Beyond Superintelligence: Towards General and Scalable LLM Organizations](https://pedrou2000.notion.site/beyond-superintelligence-llm-orgs)
+
+The program has three phases: **measure** the meta-work deficit in today's agents → **intervene** to test whether closing it improves outcomes → **organize**, building the layer where meta-work becomes explicit, durable structure. This repository is the first phase, and it is early-stage, active research: an instrument for measuring meta-work, and first evidence that agents systematically under-invest in it.
 
 ---
 
@@ -29,34 +31,21 @@ There is no off-the-shelf instrument for this, so we built one: a **task-adaptiv
 - **Stage B: trajectory scoring.** One independent judge per dimension explores the agent's raw trajectory with read-only tools and grades the *observed* level, citing step-level evidence. Judges are blind to model identity and task outcome, and never see the targets they're graded against.
 - **Aggregate.** Weighted signed gap per trajectory, plus the per-dimension profile.
 
-Before trusting the instrument we **measured our own ruler**: a nested variance study (10 rubrics × 10 rescorings × 2 trajectories) decomposed the judge's run-to-run noise into its two stages. Scoring is tight; the dominant noise is rubric synthesis re-drawing the bar. So for any comparison across conditions we pin a single rubric per task, which removes that noise source entirely. Knowing the noise floor (σ ≈ 0.55 on the gap) is also what lets us say which findings below are far outside it.
+Before trusting the instrument we **measured our own ruler**: a nested variance study characterized the judge's run-to-run noise and where it comes from, so we know which findings sit far outside the noise floor and which comparisons need a pinned rubric. Details in the [reliability experiment](results/metawork/judged/v2_adaptive/experiments/variance/README.md).
 
-## 4. What we've found
+## 4. First evidence
 
-**Under-investment is near-universal.** Scoring one trajectory from every frontier model on every task of a long-horizon software benchmark (9 models × 20 tasks, [SWE-Marathon](https://swe-marathon.vercel.app/)): mean gap **−2.8**, with **96% of trajectories under-investing** and 82% by more than a full point. Every model under-invests; stronger models are closer to calibrated (Claude Opus 4.8 at −1.15) and weaker ones further (−4.2), but none reaches zero. The largest deficit, in every model, is **verification**: agents skimp on checking their work more than on any other meta-work faculty.
+**Under-investment is near-universal.** Scoring frontier models across the tasks of a long-horizon software benchmark ([SWE-Marathon](https://swe-marathon.vercel.app/)), nearly every trajectory under-invests in meta-work relative to what its task demanded. Every model shows the deficit; stronger models sit closer to calibrated but none reaches it. The largest deficit, in every model, is **verification**: agents skimp on checking their work more than on any other meta-work faculty.
 
 ![Where the deficit lives](results/metawork/judged/v2_adaptive/experiments/published_grid/plots/5_dimension_profile.png)
 
-![Gap disposition per model](results/metawork/judged/v2_adaptive/experiments/published_grid/plots/3_model_disposition.png)
+**Better-calibrated meta-work goes with better outcomes, and the link survives the controls that usually kill such claims.** The obvious worry is confounding: easy tasks make agents look organized *and* produce passing solutions; capable models both organize better and solve better. So we re-compute the association comparing only trajectories of the same model on the same task, which removes both at once. The correlation attenuates but clearly survives (within-cell r ≈ +0.2, p ≈ 3×10⁻⁵, on 600 trajectories). Notably, our first-generation instrument failed exactly this test: its apparent effect collapsed to zero under the same control, so we discarded it and rebuilt from first principles before making any claim.
 
-**Better-calibrated meta-work goes with better outcomes, and the link survives the controls that usually kill such claims.** The obvious worry: maybe "easy tasks make agents look organized *and* produce passing solutions" (difficulty confound), or "capable models both organize better and solve better" (capability confound). We test this with a *confound ladder*: re-computing the gap↔outcome correlation within tasks, within models, and finally **within each (task, model) cell**, comparing only trajectories of the same model on the same task, which removes both confounds at once. On 600 trajectories (4 models × 20 tasks, 5-10 runs per cell):
-
-| control | r |
-|---|---|
-| pooled | +0.33 |
-| within-task (difficulty removed) | +0.35 |
-| within-model (capability removed) | +0.26 |
-| **within-both** | **+0.18** (p ≈ 3×10⁻⁵) |
-
-![The full confound ladder](results/metawork/judged/v2_adaptive/experiments/published_within4/plots/6_confound_within_both.png)
-
-This result is worth trusting partly because of how we got here: **our first-generation judge's effect collapsed to zero under exactly this control**. The apparent meta-work effect was pure capability confound. We discarded it, rebuilt the instrument from first principles, and re-ran the test. The new effect attenuates under full control but does not collapse, holds in 60% of cells individually, and holds within every model separately.
-
-**Stated plainly, the limits:** the effect is correlational (nothing here proves that *adding* meta-work causes better outcomes); the within-cell effect size is modest (r ≈ +0.18 observed, ≈ +0.27 after correcting for measured judge noise); and the underlying public corpus preserves different models' reasoning text unevenly, so *cross-model rankings* are suggestive rather than definitive. The within-cell result, the one that carries the causal-adjacent weight, is robust to that artifact by construction.
+These results are correlational and early; full designs, numbers, plots, and stated limits live in the per-experiment READMEs under [`results/.../experiments/`](results/metawork/judged/v2_adaptive/experiments/).
 
 ## 5. Where this goes
 
-The arc of the program: **measure** the meta-work deficit (this repo, done and ongoing) → **intervene**, testing whether content-free nudges and scaffolds can close the gap and whether closing it improves outcomes, turning the correlation above into cause → **organize**, building the structural layer where meta-work stops being a per-agent disposition and becomes an explicit, durable, shared artifact: roles, plans, verification processes, routines. That last step is the [LLM-organizations vision](https://pedrou2000.notion.site/beyond-superintelligence-llm-orgs) this project exists to serve: organizations as the technology that lets bounded agents do unbounded meta-work.
+This repo covers the **measure** phase. Next comes **intervene**: content-free nudges and scaffolds to test whether the deficit is correctable and whether correcting it improves outcomes, turning correlation into cause. The destination is **organize**: the structural layer where meta-work stops being a per-agent disposition and becomes explicit, durable, shared structure (roles, plans, verification processes, routines). That is the [LLM-organizations vision](https://pedrou2000.notion.site/beyond-superintelligence-llm-orgs) this project exists to serve: organizations as the technology that lets bounded agents do unbounded meta-work.
 
 ---
 
