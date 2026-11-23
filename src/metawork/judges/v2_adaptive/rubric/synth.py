@@ -13,6 +13,7 @@ yields `{"rubric": None, "error": ...}`.
 """
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from claude_agent_sdk import (
@@ -25,6 +26,12 @@ from claude_agent_sdk import (
 from common.models import MODELS
 
 from .validate import extract_json, validate_rubric
+
+# Wall-clock ceiling on one rubric-synth call. Like the Stage-B judge, the SDK
+# query can hang indefinitely; without this a single stuck synth stalls the
+# whole batch's Stage A (rubrics are synthesized in a loop). A synth is a single
+# reasoning-heavy shot — ~1 min healthy — so 5 min is a generous stuck threshold.
+SYNTH_TIMEOUT_S = 300
 
 # The rubric synthesizer is reasoning-heavy (design a measuring instrument), so
 # default to a strong model. Overridable per call.
@@ -53,18 +60,21 @@ def _rubric_options(model_label: str) -> ClaudeAgentOptions:
 
 async def _one_call(prompt: str, model_label: str) -> tuple[str, float]:
     """One rubric-synth LLM call. Returns (reply_text, cost_usd). Raises on API
-    error (the caller decides whether to retry)."""
-    final_text, cost = "", 0.0
-    async for msg in query(prompt=prompt, options=_rubric_options(model_label)):
-        if isinstance(msg, AssistantMessage):
-            for blk in msg.content:
-                if isinstance(blk, TextBlock):
-                    final_text += blk.text
-        else:
-            tc = getattr(msg, "total_cost_usd", None)
-            if tc is not None:
-                cost = tc
-    return final_text, cost
+    error or if the call stalls past SYNTH_TIMEOUT_S (the caller retries)."""
+    async def _consume() -> tuple[str, float]:
+        final_text, cost = "", 0.0
+        async for msg in query(prompt=prompt, options=_rubric_options(model_label)):
+            if isinstance(msg, AssistantMessage):
+                for blk in msg.content:
+                    if isinstance(blk, TextBlock):
+                        final_text += blk.text
+            else:
+                tc = getattr(msg, "total_cost_usd", None)
+                if tc is not None:
+                    cost = tc
+        return final_text, cost
+
+    return await asyncio.wait_for(_consume(), timeout=SYNTH_TIMEOUT_S)
 
 
 async def synthesize_rubric(
